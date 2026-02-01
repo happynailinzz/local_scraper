@@ -1,0 +1,244 @@
+{
+  "msg_type": "interactive",
+  "card": {
+    "schema": "2.0",
+    "config": {
+      "wide_screen_mode": true
+    },
+    "header": {
+      "title": {
+        "tag": "plain_text",
+        "content": "2026-02-01 11:45 | 采购 | 新增18/重复2/处理20 | 第1-10/18"
+      },
+      "template": "blue"
+    },
+    "elements": [
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "![banner](https://your-cdn.com/banner.png)"
+        }
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**任务时间**：2026-02-01 11:45\n**关键词**：采购\n**完成情况**：新增18/重复2/处理20\n**回溯天数**：7"
+        }
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "div",
+        "text": {
+          "tag": "lark_md",
+          "content": "**1. 首条标题示例**\n发布日期：2026-02-01\n\n这里是首条 AI 总结（完整展示）"
+        }
+      },
+      {
+        "tag": "action",
+        "actions": [
+          {
+            "tag": "button",
+            "text": {
+              "tag": "plain_text",
+              "content": "查看原文"
+            },
+            "url": "https://example.com/detail/1",
+            "type": "primary"
+          }
+        ]
+      },
+      {
+        "tag": "hr"
+      },
+      {
+        "tag": "collapsible",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "2. 摘要标题（自动截断）"
+          }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "tag": "lark_md",
+              "content": "**标题 2**\n发布日期：2026-02-01\n\n这里是 AI 总结内容……\n\n[查看原文](https://example.com/detail/2)"
+            }
+          }
+        ]
+      },
+      {
+        "tag": "collapsible",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "3. 摘要标题（自动截断）"
+          }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "tag": "lark_md",
+              "content": "**标题 3**\n发布日期：2026-02-01\n\n这里是 AI 总结内容……\n\n[查看原文](https://example.com/detail/3)"
+            }
+          }
+        ]
+      },
+      {
+        "tag": "collapsible",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "4. 摘要标题（自动截断）"
+          }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "tag": "lark_md",
+              "content": "**标题 4**\n发布日期：2026-02-01\n\n这里是 AI 总结内容……\n\n[查看原文](https://example.com/detail/4)"
+            }
+          }
+        ]
+      },
+      {
+        "tag": "collapsible",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "5. 摘要标题（自动截断）"
+          }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "tag": "lark_md",
+              "content": "**标题 5**\n发布日期：2026-02-01\n\n这里是 AI 总结内容……\n\n[查看原文](https://example.com/detail/5)"
+            }
+          }
+        ]
+      },
+      {
+        "tag": "collapsible",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "6. 摘要标题（自动截断）"
+          }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "tag": "lark_md",
+              "content": "**标题 6**\n发布日期：2026-02-01\n\n这里是 AI 总结内容……\n\n[查看原文](https://example.com/detail/6)"
+            }
+          }
+        ]
+      },
+      {
+        "tag": "collapsible",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "7. 摘要标题（自动截断）"
+          }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "tag": "lark_md",
+              "content": "**标题 7**\n发布日期：2026-02-01\n\n这里是 AI 总结内容……\n\n[查看原文](https://example.com/detail/7)"
+            }
+          }
+        ]
+      },
+      {
+        "tag": "collapsible",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "8. 摘要标题（自动截断）"
+          }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "tag": "lark_md",
+              "content": "**标题 8**\n发布日期：2026-02-01\n\n这里是 AI 总结内容……\n\n[查看原文](https://example.com/detail/8)"
+            }
+          }
+        ]
+      },
+      {
+        "tag": "collapsible",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "9. 摘要标题（自动截断）"
+          }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "tag": "lark_md",
+              "content": "**标题 9**\n发布日期：2026-02-01\n\n这里是 AI 总结内容……\n\n[查看原文](https://example.com/detail/9)"
+            }
+          }
+        ]
+      },
+      {
+        "tag": "collapsible",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "10. 摘要标题（自动截断）"
+          }
+        },
+        "elements": [
+          {
+            "tag": "div",
+            "text": {
+              "tag": "lark_md",
+              "content": "**标题 10**\n发布日期：2026-02-01\n\n这里是 AI 总结内容……\n\n[查看原文](https://example.com/detail/10)"
+            }
+          }
+        ]
+      },
+      {
+        "tag": "action",
+        "actions": [
+          {
+            "tag": "button",
+            "text": {
+              "tag": "plain_text",
+              "content": "查看全部"
+            },
+            "url": "https://your-webui.example.com/announcements?q=%E9%87%87%E8%B4%AD",
+            "type": "default"
+          }
+        ]
+      }
+    ]
+  }
+}

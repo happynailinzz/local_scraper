@@ -1,0 +1,45 @@
+services:
+  local-scraper:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: local-scraper
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # WebUI
+      WEBUI_HOST: 0.0.0.0
+      WEBUI_PORT: 8000
+
+      # Basic Auth (set in 1Panel env or .env)
+      WEBUI_USERNAME: ${WEBUI_USERNAME}
+      WEBUI_PASSWORD: ${WEBUI_PASSWORD}
+
+      # Scraper core
+      AI_API_KEY: ${AI_API_KEY}
+      FEISHU_WEBHOOK_URL: ${FEISHU_WEBHOOK_URL}
+
+      DAYS_LOOKBACK: ${DAYS_LOOKBACK:-7}
+      DEDUPE_STRATEGY: ${DEDUPE_STRATEGY:-title}
+      KEYWORD_REGEX: ${KEYWORD_REGEX:-(系统|软件|平台|大数据|AI|采购|招标)}
+
+      # Pagination limits
+      MAX_PAGES_TOTAL: ${MAX_PAGES_TOTAL:-200}
+      MAX_PAGES_PER_CATEGORY: ${MAX_PAGES_PER_CATEGORY:-50}
+
+      # Adaptive throttling
+      ADAPTIVE_DELAY_THRESHOLD_PAGES: ${ADAPTIVE_DELAY_THRESHOLD_PAGES:-10}
+      BATCH_SIZE: ${BATCH_SIZE:-50}
+      DELAY_INCREMENT_SECONDS: ${DELAY_INCREMENT_SECONDS:-1}
+      MAX_LOOP_DELAY_SECONDS: ${MAX_LOOP_DELAY_SECONDS:-10}
+
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_JSON: ${LOG_JSON:-false}
+
+      # DB
+      DB_PATH: /app/data/zhaocai.db
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs

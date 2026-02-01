@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <div class="h">公告详情</div>
+  <div class="muted">ID: {{ row.id }} | 日期: {{ row.date }} | 状态: {{ row.status }}</div>
+  <h2 style="margin:10px 0 6px; font-size:16px;">{{ row.title }}</h2>
+  <div style="margin:8px 0;">
+    <a href="{{ row.url }}" target="_blank" rel="noreferrer">查看原文</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="h">AI 总结</div>
+  <pre>{{ row.ai_summary or "(empty)" }}</pre>
+</div>
+
+<div class="card">
+  <div class="h">正文</div>
+  <pre>{{ row.content or "(empty)" }}</pre>
+</div>
+
+{% endblock %}

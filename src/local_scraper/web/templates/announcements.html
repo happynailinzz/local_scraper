@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <div class="h">公告列表</div>
+  <form method="get" class="controls">
+    <div>
+      <label>搜索</label>
+      <input name="q" value="{{ q }}" placeholder="标题/链接" />
+    </div>
+    <div>
+      <label>开始日期</label>
+      <input name="date_from" value="{{ date_from }}" placeholder="YYYY-MM-DD" />
+    </div>
+    <div>
+      <label>结束日期</label>
+      <input name="date_to" value="{{ date_to }}" placeholder="YYYY-MM-DD" />
+    </div>
+    <div>
+      <label>状态</label>
+      <select name="status">
+        <option value="" {% if status == "" %}selected{% endif %}>全部</option>
+        <option value="NEW" {% if status == "NEW" %}selected{% endif %}>NEW</option>
+        <option value="PROCESSED" {% if status == "PROCESSED" %}selected{% endif %}>PROCESSED</option>
+        <option value="FAILED" {% if status == "FAILED" %}selected{% endif %}>FAILED</option>
+      </select>
+    </div>
+    <div>
+      <label>AI 总结</label>
+      <select name="ai_summary_state">
+        <option value="" {% if ai_summary_state == "" %}selected{% endif %}>全部</option>
+        <option value="ok" {% if ai_summary_state == "ok" %}selected{% endif %}>有总结</option>
+        <option value="failed" {% if ai_summary_state == "failed" %}selected{% endif %}>总结失败</option>
+        <option value="empty" {% if ai_summary_state == "empty" %}selected{% endif %}>为空</option>
+      </select>
+    </div>
+    <div>
+      <label>每页</label>
+      <select name="page_size">
+        {% for s in [20,50,100,200] %}
+        <option value="{{s}}" {% if page_size == s %}selected{% endif %}>{{s}}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <button type="submit">查询</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="muted">共 {{ total }} 条</div>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>日期</th>
+        <th>标题</th>
+        <th>AI 预览</th>
+        <th>状态</th>
+        <th>更新时间</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>{{ r.date }}</td>
+        <td class="rowtitle"><a href="/announcements/{{ r.id }}">{{ r.title }}</a></td>
+        <td class="muted">{{ r.ai_summary_preview or "" }}</td>
+        <td><span class="pill">{{ r.status }}</span></td>
+        <td class="muted">{{ r.updated_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="pager" style="margin-top:10px;">
+    {% set total_pages = (total // page_size) + (1 if total % page_size else 0) %}
+    <span class="muted">第 {{ page }} / {{ total_pages if total_pages else 1 }} 页</span>
+    {% if page > 1 %}
+      <a href="?q={{q}}&date_from={{date_from}}&date_to={{date_to}}&status={{status}}&ai_summary_state={{ai_summary_state}}&page={{page-1}}&page_size={{page_size}}">上一页</a>
+    {% endif %}
+    {% if page < total_pages %}
+      <a href="?q={{q}}&date_from={{date_from}}&date_to={{date_to}}&status={{status}}&ai_summary_state={{ai_summary_state}}&page={{page+1}}&page_size={{page_size}}">下一页</a>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+.env copy.example
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+data/*.db
+data/*.db-*
+logs/
+.DS_Store
+local_scraper/

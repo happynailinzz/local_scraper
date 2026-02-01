@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="card">
+  <div class="h">运行记录</div>
+  <form method="post" action="/runs/start" class="controls">
+    <div>
+      <label>回溯天数</label>
+      <input name="days_lookback" value="7" />
+    </div>
+    <div>
+      <label>关键词(逗号分隔)</label>
+      <input name="keywords" value="采购" />
+    </div>
+    <div>
+      <label>去重策略</label>
+      <select name="dedupe_strategy">
+        <option value="title">title</option>
+        <option value="url">url</option>
+        <option value="title_date">title_date</option>
+      </select>
+    </div>
+    <div>
+      <label>MAX_ITEMS</label>
+      <input name="max_items" value="0" />
+    </div>
+    <div>
+      <label>LOOP_DELAY</label>
+      <input name="loop_delay" value="1" />
+    </div>
+    <div>
+      <label>分页上限(全局)</label>
+      <input name="max_pages_total" value="80" />
+    </div>
+    <div>
+      <label>分页上限(单栏目)</label>
+      <input name="max_pages_per_category" value="50" />
+    </div>
+    <div>
+      <label>节流触发(翻页数)</label>
+      <input name="adaptive_threshold_pages" value="10" />
+    </div>
+    <div>
+      <label>节流批大小</label>
+      <input name="batch_size" value="50" />
+    </div>
+    <div>
+      <label>每批加延迟(秒)</label>
+      <input name="delay_increment_seconds" value="1" />
+    </div>
+    <div>
+      <label>最大延迟(秒)</label>
+      <input name="max_loop_delay_seconds" value="10" />
+    </div>
+    <div>
+      <label>飞书推送</label>
+      <select name="send_feishu">
+        <option value="true" selected>开启</option>
+        <option value="false">关闭</option>
+      </select>
+    </div>
+    <div>
+      <label>飞书通知模式</label>
+      <select name="feishu_notify_mode">
+        <option value="digest" selected>汇总</option>
+        <option value="per_item">逐条</option>
+      </select>
+    </div>
+    <div>
+      <button type="submit">启动一次采集</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="muted">共 {{ total }} 条</div>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>run_id</th>
+        <th>started_at</th>
+        <th>duration</th>
+        <th>processed</th>
+        <th>new</th>
+        <th>dup</th>
+        <th>status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="/runs/{{ r.run_id }}">{{ r.run_id[:8] }}</a></td>
+        <td class="muted">{{ r.started_at }}</td>
+        <td class="muted">{{ r.duration_seconds or "-" }}</td>
+        <td>{{ r.total_processed }}</td>
+        <td>{{ r.total_new }}</td>
+        <td>{{ r.total_duplicate }}</td>
+        <td><span class="pill">{{ r.status }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="pager" style="margin-top:10px;">
+    {% set total_pages = (total // page_size) + (1 if total % page_size else 0) %}
+    <span class="muted">第 {{ page }} / {{ total_pages if total_pages else 1 }} 页</span>
+    {% if page > 1 %}
+      <a href="?page={{page-1}}&page_size={{page_size}}">上一页</a>
+    {% endif %}
+    {% if page < total_pages %}
+      <a href="?page={{page+1}}&page_size={{page_size}}">下一页</a>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

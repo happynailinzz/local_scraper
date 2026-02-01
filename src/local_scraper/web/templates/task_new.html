@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block body %}
+
+<div class="card">
+  <div class="h">新建任务</div>
+  <form method="post" action="/tasks/create" class="controls">
+    <div style="min-width:260px;">
+      <label>任务名</label>
+      <input name="name" value="每日采购" />
+    </div>
+    <div>
+      <label>启用</label>
+      <select name="enabled">
+        <option value="true" selected>是</option>
+        <option value="false">否</option>
+      </select>
+    </div>
+    <div>
+      <label>计划类型</label>
+      <select name="schedule_type" id="schedule_type">
+        <option value="cron" selected>cron</option>
+        <option value="interval">interval</option>
+      </select>
+    </div>
+    <div style="min-width:260px;">
+      <label>cron 表达式(5段)</label>
+      <input name="cron_expr" value="0 8,12,16,20 * * *" />
+      <div class="muted">例：0 8,12,16,20 * * * 表示每天 8/12/16/20 点</div>
+    </div>
+    <div>
+      <label>interval 秒</label>
+      <input name="interval_seconds" value="3600" />
+      <div class="muted">仅 schedule_type=interval 时生效</div>
+    </div>
+
+    <div style="min-width:260px;">
+      <label>关键词(逗号分隔)</label>
+      <input name="keywords" value="采购" />
+    </div>
+    <div>
+      <label>回溯天数</label>
+      <input name="days_lookback" value="7" />
+    </div>
+    <div>
+      <label>去重策略</label>
+      <select name="dedupe_strategy">
+        <option value="title" selected>title</option>
+        <option value="url">url</option>
+        <option value="title_date">title_date</option>
+      </select>
+    </div>
+    <div>
+      <label>飞书推送</label>
+      <select name="send_feishu">
+        <option value="true" selected>开启</option>
+        <option value="false">关闭</option>
+      </select>
+    </div>
+    <div>
+      <label>飞书通知模式</label>
+      <select name="feishu_notify_mode">
+        <option value="digest" selected>汇总</option>
+        <option value="per_item">逐条</option>
+      </select>
+      <div class="muted">汇总：单次运行仅发一张卡片；逐条：每条新增都发</div>
+    </div>
+
+    <div>
+      <label>MAX_ITEMS</label>
+      <input name="max_items" value="0" />
+    </div>
+    <div>
+      <label>LOOP_DELAY</label>
+      <input name="loop_delay" value="1" />
+    </div>
+
+    <div>
+      <label>MAX_PAGES_TOTAL</label>
+      <input name="max_pages_total" value="80" />
+    </div>
+    <div>
+      <label>MAX_PAGES_PER_CATEGORY</label>
+      <input name="max_pages_per_category" value="50" />
+    </div>
+
+    <div>
+      <label>节流阈值(翻页数)</label>
+      <input name="adaptive_threshold_pages" value="10" />
+    </div>
+    <div>
+      <label>节流批大小</label>
+      <input name="batch_size" value="50" />
+    </div>
+    <div>
+      <label>每批加延迟(秒)</label>
+      <input name="delay_increment_seconds" value="1" />
+    </div>
+    <div>
+      <label>最大延迟(秒)</label>
+      <input name="max_loop_delay_seconds" value="10" />
+    </div>
+
+    <div>
+      <button type="submit">创建</button>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

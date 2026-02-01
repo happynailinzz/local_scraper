@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block body %}
+
+<div class="card">
+  <div class="h">任务详情</div>
+  <div class="muted">task_id: {{ task.task_id }}</div>
+  <div style="margin-top:8px;">
+    <div><span class="pill">{{ 'ON' if task.enabled else 'OFF' }}</span> <span class="pill">{{ task.schedule_type }}</span></div>
+    <div class="muted" style="margin-top:6px;">
+      {% if task.schedule_type == 'cron' %}
+        cron: {{ task.cron_expr }}
+      {% else %}
+        interval: {{ task.interval_seconds }}s
+      {% endif %}
+    </div>
+    <div class="muted" style="margin-top:6px;">
+      FEISHU_NOTIFY_MODE: {{ task.config.get('FEISHU_NOTIFY_MODE', '-') if task.config else '-' }}
+    </div>
+    <div class="muted" style="margin-top:6px;">
+      KEYWORDS_LABEL: {{ task.config.get('KEYWORDS_LABEL', '-') if task.config else '-' }}
+    </div>
+  </div>
+
+  <div style="margin-top:10px;">
+    <form method="post" action="/tasks/{{ task.task_id }}/toggle" style="display:inline;">
+      <button type="submit">{{ '停用' if task.enabled else '启用' }}</button>
+    </form>
+    <form method="get" action="/tasks/{{ task.task_id }}" style="display:inline;">
+      <button type="submit">刷新配置</button>
+    </form>
+    <form method="post" action="/tasks/{{ task.task_id }}/run" style="display:inline;">
+      <button type="submit">立即运行</button>
+    </form>
+    <form method="post" action="/tasks/{{ task.task_id }}/stop" style="display:inline;">
+      <button type="submit">停止</button>
+    </form>
+    <form method="post" action="/tasks/{{ task.task_id }}/delete" style="display:inline;">
+      <button type="submit">删除</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="h">运行状态</div>
+  <div class="muted">{{ runtime.last_status if runtime else '-' }}{% if runtime and runtime.running %} (RUNNING){% endif %}</div>
+  <pre id="log"></pre>
+  <div class="muted" id="status"></div>
+</div>
+
+<script>
+  const logEl = document.getElementById('log');
+  const statusEl = document.getElementById('status');
+  const es = new EventSource(`/tasks/{{ task.task_id }}/stream`);
+  es.onmessage = (e) => {
+    logEl.textContent += e.data + "\n";
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+  es.addEventListener('end', (e) => {
+    statusEl.textContent = `done: ${e.data}`;
+  });
+</script>
+
+{% endblock %}

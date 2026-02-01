@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block body %}
+
+<div class="card">
+  <div class="h">任务</div>
+  <div class="controls">
+    <div>
+      <a href="/tasks/new"><button type="button">新建任务</button></a>
+    </div>
+    <div class="muted">任务由 WebUI 内置调度器执行（cron/间隔）</div>
+  </div>
+</div>
+
+<div class="card">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>name</th>
+        <th>schedule</th>
+        <th>enabled</th>
+        <th>running</th>
+        <th>last</th>
+        <th>ops</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tasks %}
+      <tr>
+        <td class="rowtitle"><a href="/tasks/{{ t.task_id }}">{{ t.name }}</a></td>
+        <td class="muted">
+          {% if t.schedule_type == 'cron' %}
+            cron: {{ t.cron_expr }}
+          {% else %}
+            interval: {{ t.interval_seconds }}s
+          {% endif %}
+        </td>
+        <td><span class="pill">{{ 'ON' if t.enabled else 'OFF' }}</span></td>
+        <td><span class="pill">{{ 'RUNNING' if t.runtime and t.runtime.running else 'IDLE' }}</span></td>
+        <td class="muted">{{ t.runtime.last_status if t.runtime else '-' }}</td>
+        <td>
+          <form method="post" action="/tasks/{{ t.task_id }}/toggle" style="display:inline;">
+            <button type="submit">{{ '停用' if t.enabled else '启用' }}</button>
+          </form>
+          <form method="post" action="/tasks/{{ t.task_id }}/run" style="display:inline;">
+            <button type="submit">立即运行</button>
+          </form>
+          <form method="post" action="/tasks/{{ t.task_id }}/stop" style="display:inline;">
+            <button type="submit">停止</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}
