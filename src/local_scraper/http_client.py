@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 
@@ -14,6 +15,9 @@ class HttpConfig:
     retry_count: int
     retry_interval_ms: int
 
+    relay_zcpt_base_url: str | None = None
+    relay_zcpt_token: str | None = None
+
 
 class HttpClient:
     def __init__(self, cfg: HttpConfig):
@@ -22,10 +26,48 @@ class HttpClient:
         self._session.headers.update({"User-Agent": cfg.user_agent})
 
     def get_text(self, url: str) -> str:
+        parts = urlsplit(url)
+        if (
+            self._cfg.relay_zcpt_base_url
+            and parts.netloc == "zcpt.zgpmsm.com.cn"
+            and parts.scheme in {"http", "https"}
+        ):
+            return self._get_text_via_zcpt_relay(parts)
+
         last_err: Exception | None = None
         for attempt in range(1, self._cfg.retry_count + 1):
             try:
                 resp = self._session.get(url, timeout=self._cfg.timeout_ms / 1000)
+                resp.raise_for_status()
+                resp.encoding = resp.apparent_encoding or resp.encoding
+                return resp.text
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                if attempt < self._cfg.retry_count:
+                    time.sleep(self._cfg.retry_interval_ms / 1000)
+                continue
+        assert last_err is not None
+        raise last_err
+
+    def _get_text_via_zcpt_relay(self, parts) -> str:
+        relay_base = (self._cfg.relay_zcpt_base_url or "").rstrip("/")
+        relay_url = relay_base + "/relay/zcpt/fetch"
+
+        headers: dict[str, str] = {}
+        if self._cfg.relay_zcpt_token:
+            headers["Authorization"] = f"Bearer {self._cfg.relay_zcpt_token}"
+
+        payload = {"path": parts.path or "/", "query": parts.query or ""}
+
+        last_err: Exception | None = None
+        for attempt in range(1, self._cfg.retry_count + 1):
+            try:
+                resp = self._session.post(
+                    relay_url,
+                    headers=headers,
+                    json=payload,
+                    timeout=self._cfg.timeout_ms / 1000,
+                )
                 resp.raise_for_status()
                 resp.encoding = resp.apparent_encoding or resp.encoding
                 return resp.text

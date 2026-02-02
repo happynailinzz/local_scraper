@@ -1,31 +1,32 @@
 services:
   local-scraper:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/happynailinzz/local-scraper:v0.1.2
     container_name: local-scraper
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "6852:6852"
     environment:
       # WebUI
       WEBUI_HOST: 0.0.0.0
-      WEBUI_PORT: 8000
+      WEBUI_PORT: 6852
 
-      # Basic Auth (set in 1Panel env or .env)
+      # Basic Auth
       WEBUI_USERNAME: ${WEBUI_USERNAME}
       WEBUI_PASSWORD: ${WEBUI_PASSWORD}
 
       # Scraper core
       AI_API_KEY: ${AI_API_KEY}
       FEISHU_WEBHOOK_URL: ${FEISHU_WEBHOOK_URL}
+      FEISHU_NOTIFY_MODE: ${FEISHU_NOTIFY_MODE:-digest}
+      FEISHU_CARD_IMAGE_URL: ${FEISHU_CARD_IMAGE_URL}
+      WEBUI_PUBLIC_URL: ${WEBUI_PUBLIC_URL}
 
       DAYS_LOOKBACK: ${DAYS_LOOKBACK:-7}
       DEDUPE_STRATEGY: ${DEDUPE_STRATEGY:-title}
       KEYWORD_REGEX: ${KEYWORD_REGEX:-(系统|软件|平台|大数据|AI|采购|招标)}
 
       # Pagination limits
-      MAX_PAGES_TOTAL: ${MAX_PAGES_TOTAL:-200}
+      MAX_PAGES_TOTAL: ${MAX_PAGES_TOTAL:-80}
       MAX_PAGES_PER_CATEGORY: ${MAX_PAGES_PER_CATEGORY:-50}
 
       # Adaptive throttling

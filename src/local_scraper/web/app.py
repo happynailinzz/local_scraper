@@ -10,11 +10,15 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from starlette.responses import StreamingResponse
+from pydantic import BaseModel
+from starlette.responses import Response, StreamingResponse
+
+import requests
 
 from ..config import Config
 from ..db import Database
@@ -164,6 +168,88 @@ _TASKS = TaskScheduler()
 
 
 app = FastAPI(title="local_scraper web")
+
+
+def _relay_enabled() -> bool:
+    return (os.environ.get("RELAY_ENABLED") or "").strip().lower() in {
+        "1",
+        "true",
+        "t",
+        "yes",
+        "y",
+        "on",
+    }
+
+
+def _relay_auth(request: Request) -> None:
+    token = (os.environ.get("RELAY_TOKEN") or "").strip()
+    if not token:
+        raise HTTPException(status_code=500, detail="RELAY_TOKEN not set")
+
+    auth = request.headers.get("Authorization") or ""
+    if not auth.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    presented = auth.split(" ", 1)[1].strip()
+    if not secrets.compare_digest(presented, token):
+        raise HTTPException(status_code=403)
+
+
+class _RelayZcptFetchIn(BaseModel):
+    path: str
+    query: str | None = ""
+
+
+@app.post("/relay/zcpt/fetch")
+def relay_zcpt_fetch(payload: _RelayZcptFetchIn, request: Request) -> Response:
+    """Fetch zcpt pages from a China-based host.
+
+    This endpoint is intentionally NOT a general-purpose proxy.
+    - Only targets https://zcpt.zgpmsm.com.cn
+    - Requires RELAY_ENABLED=true and a Bearer token
+    """
+
+    if not _relay_enabled():
+        raise HTTPException(status_code=404)
+
+    _relay_auth(request)
+
+    path = (payload.path or "").strip() or "/"
+    if not path.startswith("/") or path.startswith("//") or "://" in path:
+        raise HTTPException(status_code=400, detail="invalid path")
+
+    sp = urlsplit(path)
+    if sp.scheme or sp.netloc:
+        raise HTTPException(status_code=400, detail="invalid path")
+
+    q = (payload.query or "").lstrip("?")
+    target_parts = ("https", "zcpt.zgpmsm.com.cn", sp.path, q, "")
+    target_url = urlunsplit(target_parts)
+
+    timeout_ms = int((os.environ.get("RELAY_TIMEOUT_MS") or "30000").strip() or 30000)
+    ua = (
+        (os.environ.get("RELAY_USER_AGENT") or "").strip()
+        or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36"
+    )
+
+    try:
+        resp = requests.get(
+            target_url,
+            headers={"User-Agent": ua},
+            timeout=timeout_ms / 1000,
+            allow_redirects=False,
+        )
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    content_type = resp.headers.get("Content-Type") or "application/octet-stream"
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers={"Content-Type": content_type},
+    )
 
 
 @app.get("/", response_class=HTMLResponse)

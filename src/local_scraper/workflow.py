@@ -273,6 +273,8 @@ def run_once(cfg: Config) -> dict[str, object]:
             timeout_ms=cfg.http_timeout_ms,
             retry_count=cfg.http_retry_count,
             retry_interval_ms=cfg.http_retry_interval_ms,
+            relay_zcpt_base_url=cfg.zcpt_relay_base_url,
+            relay_zcpt_token=cfg.zcpt_relay_token,
         )
     )
 

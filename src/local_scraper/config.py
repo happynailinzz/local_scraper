@@ -54,6 +54,11 @@ class Config:
     ai_retry_interval_ms: int
 
     feishu_webhook_url: str | None
+
+    # Optional: fetch zcpt pages via a relay service (for overseas deployments)
+    zcpt_relay_base_url: str | None = None
+    zcpt_relay_token: str | None = None
+
     feishu_notify_mode: str = "digest"
     feishu_card_image_url: str | None = None
 
@@ -98,6 +103,11 @@ class Config:
         if feishu_notify_mode not in {"digest", "per_item"}:
             feishu_notify_mode = "digest"
 
+        zcpt_relay_base_url = (
+            os.environ.get("ZCPT_RELAY_BASE_URL") or ""
+        ).strip() or None
+        zcpt_relay_token = (os.environ.get("ZCPT_RELAY_TOKEN") or "").strip() or None
+
         return cls(
             list_url=os.environ.get(
                 "LIST_URL", "https://zcpt.zgpmsm.com.cn/jyxx/sec_listjyxx.html"
@@ -121,6 +131,8 @@ class Config:
             http_retry_interval_ms=_parse_int(
                 os.environ.get("HTTP_RETRY_INTERVAL_MS"), 2000
             ),
+            zcpt_relay_base_url=zcpt_relay_base_url,
+            zcpt_relay_token=zcpt_relay_token,
             ai_api_key=ai_api_key,
             ai_base_url=os.environ.get("AI_BASE_URL", "https://api.yuweixun.site/v1"),
             ai_model=os.environ.get("AI_MODEL", "llama-3.3-70b-versatile"),

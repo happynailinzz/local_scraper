@@ -152,6 +152,25 @@ AI_DISABLED=false pytest -q -m integration
 - 挂载 `data/` 与 `logs/` 以持久化 SQLite 与日志
 - 用 1Panel 反代 + HTTPS；WebUI 仍有 Basic Auth
 
+### 6.1 海外服务器无法访问 zcpt 时：使用国内中转（定向 Relay）
+
+当海外服务器无法直接访问 `https://zcpt.zgpmsm.com.cn/...` 时，可以在国内服务器开启一个“仅允许访问 zcpt”的中转接口，然后海外部署通过该接口拉取页面。
+
+国内服务器（中转端）：
+- 在 WebUI 服务上开启：`RELAY_ENABLED=true`
+- 设置强鉴权：`RELAY_TOKEN=<长随机字符串>`
+- （可选）`RELAY_TIMEOUT_MS` / `RELAY_USER_AGENT`
+- 暴露路径：`POST /relay/zcpt/fetch`（仅允许目标站 `zcpt.zgpmsm.com.cn`）
+
+海外服务器（调用端）：
+- 设置：
+  - `ZCPT_RELAY_BASE_URL=https://<国内WebUI域名或IP>`
+  - `ZCPT_RELAY_TOKEN=<同一份 RELAY_TOKEN>`
+
+说明：
+- 该中转接口不是通用代理：不会转发任意 URL，只会拼接到 `https://zcpt.zgpmsm.com.cn`。
+- 建议只对海外服务器 IP 放行该接口，并放在 HTTPS 反代后面。
+
 ## 7. 版本发布（GitHub + GHCR）
 
 推送 tag（例如 `v0.1.0`）会触发：
