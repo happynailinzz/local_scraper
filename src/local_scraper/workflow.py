@@ -551,23 +551,32 @@ def run_once(cfg: Config) -> dict[str, object]:
                     for i in range(0, len(new_items), chunk_size):
                         range_start = i + 1
                         range_end = min(i + chunk_size, total_items)
-                        feishu.send_card(
-                            build_digest_card(
-                                keyword_label=cfg.keywords_label or cfg.keyword_regex,
-                                execution_time=run.started_at,
-                                duration_seconds=duration,
-                                total_new=total_new,
-                                total_duplicate=total_duplicate,
-                                total_processed=total_processed,
-                                items=new_items[i : i + chunk_size],
-                                webui_public_url=cfg.webui_public_url,
-                                days_lookback=cfg.days_lookback,
-                                image_url=cfg.feishu_card_image_url,
+                        try:
+                            feishu.send_card(
+                                build_digest_card(
+                                    keyword_label=cfg.keywords_label
+                                    or cfg.keyword_regex,
+                                    execution_time=run.started_at,
+                                    duration_seconds=duration,
+                                    total_new=total_new,
+                                    total_duplicate=total_duplicate,
+                                    total_processed=total_processed,
+                                    items=new_items[i : i + chunk_size],
+                                    webui_public_url=cfg.webui_public_url,
+                                    days_lookback=cfg.days_lookback,
+                                    image_url=cfg.feishu_card_image_url,
+                                    range_start=range_start,
+                                    range_end=range_end,
+                                    total_items=total_items,
+                                )
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            log.warn(
+                                "feishu.send_digest_failed",
                                 range_start=range_start,
                                 range_end=range_end,
-                                total_items=total_items,
+                                error=str(e),
                             )
-                        )
                 else:
                     feishu.send_card(
                         build_summary_card(

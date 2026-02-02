@@ -67,9 +67,18 @@ class TaskScheduler:
 
             trigger = None
             if schedule_type == "cron" and cron_expr:
-                trigger = CronTrigger.from_crontab(str(cron_expr), timezone=_TZ)
-            elif schedule_type == "interval" and interval_seconds:
-                trigger = IntervalTrigger(seconds=int(interval_seconds), timezone=_TZ)
+                try:
+                    trigger = CronTrigger.from_crontab(str(cron_expr), timezone=_TZ)
+                except Exception:
+                    continue
+            elif schedule_type == "interval" and interval_seconds is not None:
+                try:
+                    seconds = int(str(interval_seconds))
+                    if seconds <= 0:
+                        raise ValueError("interval_seconds must be positive")
+                    trigger = IntervalTrigger(seconds=seconds, timezone=_TZ)
+                except Exception:
+                    continue
             else:
                 continue
 
@@ -77,16 +86,19 @@ class TaskScheduler:
             if task_id in existing:
                 continue
 
-            self._scheduler.add_job(
-                func=self._run_task_job,
-                trigger=trigger,
-                id=task_id,
-                name=str(t["name"]),
-                replace_existing=True,
-                coalesce=True,
-                max_instances=1,
-                misfire_grace_time=60,
-            )
+            try:
+                self._scheduler.add_job(
+                    func=self._run_task_job,
+                    trigger=trigger,
+                    id=task_id,
+                    name=str(t["name"]),
+                    replace_existing=True,
+                    coalesce=True,
+                    max_instances=1,
+                    misfire_grace_time=60,
+                )
+            except Exception:
+                continue
 
         # Remove jobs no longer enabled.
         for job_id in existing:
@@ -130,7 +142,8 @@ class TaskScheduler:
             return
 
         overrides: dict[str, str] = {}
-        conf = (t.get("config") or {}) if isinstance(t.get("config"), dict) else {}
+        conf_raw = t.get("config")
+        conf: dict[str, object] = conf_raw if isinstance(conf_raw, dict) else {}
         for k, v in conf.items():
             overrides[str(k)] = str(v)
 

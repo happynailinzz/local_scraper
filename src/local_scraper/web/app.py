@@ -414,6 +414,7 @@ def task_create(
     _: Any = Depends(_basic_auth),
 ) -> RedirectResponse:
     import uuid
+    from apscheduler.triggers.cron import CronTrigger
 
     cfg = Config.from_env()
     task_id = str(uuid.uuid4())
@@ -449,8 +450,30 @@ def task_create(
         config["FEISHU_WEBHOOK_URL"] = ""
 
     st = schedule_type.strip().lower()
-    cron = cron_expr.strip() if st == "cron" else None
-    interval = int(interval_seconds) if st == "interval" else None
+    if st not in {"cron", "interval"}:
+        raise HTTPException(status_code=400, detail="invalid schedule_type")
+
+    cron = None
+    interval = None
+    if st == "cron":
+        cron = cron_expr.strip()
+        if not cron:
+            raise HTTPException(status_code=400, detail="cron_expr is required")
+        try:
+            CronTrigger.from_crontab(cron)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=f"invalid cron_expr: {e}")
+    else:
+        try:
+            interval = int(interval_seconds)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(
+                status_code=400, detail=f"invalid interval_seconds: {e}"
+            )
+        if interval <= 0:
+            raise HTTPException(
+                status_code=400, detail="interval_seconds must be positive"
+            )
 
     db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
     db.upsert_task(

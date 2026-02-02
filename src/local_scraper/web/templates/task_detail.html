@@ -57,6 +57,7 @@
   };
   es.addEventListener('end', (e) => {
     statusEl.textContent = `done: ${e.data}`;
+    es.close();
   });
 </script>
 
