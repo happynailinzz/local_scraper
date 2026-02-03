@@ -92,10 +92,11 @@ class TaskScheduler:
                     trigger=trigger,
                     id=task_id,
                     name=str(t["name"]),
+                    args=(task_id,),
                     replace_existing=True,
                     coalesce=True,
                     max_instances=1,
-                    misfire_grace_time=60,
+                    misfire_grace_time=7200,
                 )
             except Exception:
                 continue
@@ -115,6 +116,15 @@ class TaskScheduler:
     def get_runtime(self, task_id: str) -> TaskRuntime | None:
         with self._lock:
             return self._runtime.get(task_id)
+
+    def get_next_run_time(self, task_id: str) -> str | None:
+        try:
+            job = self._scheduler.get_job(task_id)
+            if not job or not job.next_run_time:
+                return None
+            return job.next_run_time.astimezone(_TZ).isoformat(timespec="seconds")
+        except Exception:
+            return None
 
     def stop(self, task_id: str) -> bool:
         with self._lock:
