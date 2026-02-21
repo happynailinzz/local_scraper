@@ -17,8 +17,8 @@ COPY scripts ./scripts
 RUN mkdir -p /app/data /app/logs
 
 ENV WEBUI_HOST=0.0.0.0 \
-    WEBUI_PORT=8000
+    WEBUI_PORT=5682
 
-EXPOSE 8000
+EXPOSE 5682
 
 CMD ["python", "scripts/webui.py"]

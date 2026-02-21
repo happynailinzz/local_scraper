@@ -1,17 +1,17 @@
 services:
   local-scraper:
-    image: ghcr.io/happynailinzz/local-scraper:v0.1.2
+    image: ghcr.io/happynailinzz/local-scraper:v0.2.2
     container_name: local-scraper
     restart: unless-stopped
     ports:
       # Host port -> container port (container always listens on 8000)
-      - "${WEBUI_PUBLISH_PORT:-6852}:6852"
+      - "${WEBUI_PUBLISH_PORT:-5682}:5682"
     env_file:
       - .env
     environment:
       # WebUI
       WEBUI_HOST: 0.0.0.0
-      WEBUI_PORT: 6852
+      WEBUI_PORT: 5682
 
       # Container timezone (optional but recommended)
       TZ: Asia/Shanghai
