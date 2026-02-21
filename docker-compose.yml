@@ -1,6 +1,6 @@
 services:
   local-scraper:
-    image: ghcr.io/happynailinzz/local-scraper:v0.2.2
+    image: ghcr.io/happynailinzz/local-scraper:v0.2.3
     container_name: local-scraper
     restart: unless-stopped
     ports:
