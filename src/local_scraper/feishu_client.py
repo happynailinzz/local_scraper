@@ -277,6 +277,124 @@ def build_digest_card(
     }
 
 
+def build_feed_aggregate_card(
+    *,
+    total_count: int,
+    channel_label: str,
+    time_range: str,
+    groups: list[dict[str, Any]],
+    expanded_group_id: str | None = None,
+) -> dict[str, Any]:
+    """Build an "info feed" aggregate card (schema 2.0).
+
+    The first group is expanded by default unless expanded_group_id is provided.
+
+    groups item format:
+      {
+        "id": "group_id",
+        "title": "...",
+        "items": ["markdown line", ...]
+      }
+
+    Notes:
+    - Uses built-in `collapsible` blocks so the card can be used with group-bot
+      webhooks without an interactive callback server.
+    - If you need "accordion" behavior (expand one group, collapse others), you
+      must handle button callbacks and update the card server-side.
+    """
+
+    safe_total = max(0, int(total_count))
+    channel = (channel_label or "").strip() or ""
+    tr = (time_range or "").strip() or ""
+
+    # Header row inside card body (left/right alignment).
+    header_row: dict[str, Any] = {
+        "tag": "column_set",
+        "columns": [
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 3,
+                "elements": [
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": f"**{safe_total} 条** {channel}".strip(),
+                        },
+                    }
+                ],
+            },
+            {
+                "tag": "column",
+                "width": "weighted",
+                "weight": 2,
+                "elements": [
+                    {
+                        "tag": "div",
+                        "text": {
+                            "tag": "lark_md",
+                            "content": tr,
+                        },
+                    }
+                ],
+            },
+        ],
+    }
+
+    elements: list[dict[str, Any]] = [header_row, {"tag": "hr"}]
+
+    # Determine which group should be expanded.
+    first_id = None
+    for g in groups or []:
+        gid = str(g.get("id") or "").strip()
+        if gid:
+            first_id = gid
+            break
+    expanded_id = (expanded_group_id or "").strip() or first_id
+
+    for idx, g in enumerate(groups or []):
+        gid = str(g.get("id") or "").strip() or f"group_{idx + 1}"
+        title = str(g.get("title") or "").strip() or gid
+        raw_items = g.get("items")
+        item_lines = (
+            [str(x) for x in raw_items]
+            if isinstance(raw_items, list)
+            else [str(raw_items)]
+            if raw_items
+            else []
+        )
+        body = "\n".join([ln for ln in (x.strip() for x in item_lines) if ln])
+        if not body:
+            body = "(无内容)"
+
+        elements.append(
+            {
+                "tag": "collapsible",
+                "expanded": bool(expanded_id and gid == expanded_id),
+                "header": {"title": {"tag": "plain_text", "content": title}},
+                "elements": [
+                    {
+                        "tag": "div",
+                        "text": {"tag": "lark_md", "content": body},
+                    }
+                ],
+            }
+        )
+
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "schema": "2.0",
+            "header": {
+                "template": "blue",
+                "title": {"tag": "plain_text", "content": "信息流聚合"},
+            },
+            "elements": elements,
+        },
+    }
+
+
 def _digest_summary(text: str, max_len: int = 42) -> str:
     t = (text or "").replace("\n", " ").strip()
     if not t:

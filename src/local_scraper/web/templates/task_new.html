@@ -65,6 +65,31 @@
       <div class="muted">汇总：单次运行仅发一张卡片；逐条：每条新增都发</div>
     </div>
 
+    {% if all_targets %}
+    <div style="width:100%;">
+      <label>推送目标飞书群（可多选，留空则用全局 Webhook）</label>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;">
+        {% for t in all_targets %}
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text);font-size:14px;">
+          <input type="checkbox" name="feishu_target_ids" value="{{ t.target_id }}"
+            style="width:16px;height:16px;border-radius:4px;cursor:pointer;"
+            {% if not t.enabled %}disabled title="该群已停用"{% endif %} />
+          <span>{{ t.name }}</span>
+          {% if t.keyword_regex %}
+          <span class="pill" style="font-size:11px;">{{ t.keyword_regex }}</span>
+          {% endif %}
+          {% if not t.enabled %}<span class="muted" style="font-size:11px;">(停用)</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+      <div class="muted" style="margin-top:4px;">勾选后此任务推送到所选群，未勾选则走全局 FEISHU_WEBHOOK_URL。<a href="/settings/feishu" style="color:var(--accent);">管理群列表</a></div>
+    </div>
+    {% else %}
+    <div style="width:100%;" class="muted">
+      尚未配置飞书群，<a href="/settings/feishu" style="color:var(--accent);">点此新建</a>后可在任务中选择推送目标。
+    </div>
+    {% endif %}
+
     <div>
       <label>MAX_ITEMS</label>
       <input name="max_items" value="0" />

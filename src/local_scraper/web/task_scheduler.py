@@ -147,23 +147,43 @@ class TaskScheduler:
         cfg = Config.from_env()
         db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
         t = db.get_task(task_id)
+        targets = db.get_task_targets(task_id)
         db.close()
         if not t:
             return
 
-        overrides: dict[str, str] = {}
+        # Build base overrides from task config_json.
+        base_overrides: dict[str, str] = {}
         conf_raw = t.get("config")
         conf: dict[str, object] = conf_raw if isinstance(conf_raw, dict) else {}
         for k, v in conf.items():
-            overrides[str(k)] = str(v)
+            base_overrides[str(k)] = str(v)
 
+        cwd = str(Path(__file__).resolve().parents[3])
+        cmd = [sys.executable, "scripts/run.py", "--log-json"]
+
+        if targets:
+            # Multi-target dispatch: fork one subprocess per enabled target.
+            self._run_multi_targets(task_id, targets, base_overrides, cmd, cwd)
+        else:
+            # Original single-target behavior.
+            self._run_single(task_id, base_overrides, cmd, cwd)
+
+    def _build_env(self, overrides: dict[str, str]) -> dict[str, str]:
         env = os.environ.copy()
         env.update(overrides)
         env["LOG_JSON"] = "true"
         env["LOG_LEVEL"] = env.get("LOG_LEVEL", "info")
+        return env
 
-        cmd = [sys.executable, "scripts/run.py", "--log-json"]
-        cwd = str(Path(__file__).resolve().parents[3])
+    def _run_single(
+        self,
+        task_id: str,
+        overrides: dict[str, str],
+        cmd: list[str],
+        cwd: str,
+    ) -> None:
+        env = self._build_env(overrides)
 
         with self._lock:
             rt = self._runtime.get(task_id)
@@ -221,6 +241,86 @@ class TaskScheduler:
             rt.last_exit_code = int(code)
             rt.last_status = "COMPLETED" if code == 0 else "FAILED"
             rt.lines.append(f"[scheduler] done: {rt.last_status} (code={code})")
+
+    def _run_multi_targets(
+        self,
+        task_id: str,
+        targets: list[dict[str, object]],
+        base_overrides: dict[str, str],
+        cmd: list[str],
+        cwd: str,
+    ) -> None:
+        with self._lock:
+            rt = self._runtime.get(task_id)
+            if not rt:
+                rt = TaskRuntime(
+                    task_id=task_id,
+                    running=False,
+                    last_status="NEVER",
+                    last_started_at=None,
+                    last_finished_at=None,
+                    last_exit_code=None,
+                    lines=[],
+                    proc=None,
+                )
+                self._runtime[task_id] = rt
+            if rt.running:
+                rt.lines.append("[scheduler] task already running, skip")
+                return
+            rt.running = True
+            rt.last_status = "RUNNING"
+            rt.last_started_at = time.time()
+            rt.last_finished_at = None
+            rt.last_exit_code = None
+            rt.lines.append(f"[scheduler] multi-target dispatch: {len(targets)} group(s)")
+
+        exit_codes: list[int] = []
+
+        for target in targets:
+            name = str(target.get("name", ""))
+            webhook = str(target.get("webhook_url", ""))
+            kw_regex = str(target.get("keyword_regex") or "")
+
+            overrides = dict(base_overrides)
+            overrides["FEISHU_WEBHOOK_URL"] = webhook
+            if kw_regex:
+                overrides["KEYWORD_REGEX"] = kw_regex
+
+            env = self._build_env(overrides)
+            self._append_line(task_id, f"[scheduler] → target: {name}")
+
+            try:
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=cwd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    env=env,
+                )
+                with self._lock:
+                    rt.proc = proc
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    self._append_line(task_id, f"[{name}] {line.rstrip(chr(10))}")
+                code = proc.wait()
+                exit_codes.append(code)
+                self._append_line(
+                    task_id,
+                    f"[scheduler] target {name} done (code={code})",
+                )
+            except Exception as e:
+                exit_codes.append(1)
+                self._append_line(task_id, f"[scheduler] target {name} failed: {e}")
+
+        overall = "COMPLETED" if all(c == 0 for c in exit_codes) else "FAILED"
+        with self._lock:
+            rt.running = False
+            rt.proc = None
+            rt.last_finished_at = time.time()
+            rt.last_exit_code = exit_codes[-1] if exit_codes else 0
+            rt.last_status = overall
+            rt.lines.append(f"[scheduler] all targets done: {overall}")
 
     def _append_line(self, task_id: str, line: str) -> None:
         with self._lock:

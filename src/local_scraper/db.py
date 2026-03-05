@@ -136,6 +136,8 @@ class Database:
         self._ensure_runs_table(cur)
         self._ensure_announcements_table(cur)
         self._ensure_tasks_table(cur)
+        self._ensure_feishu_targets_table(cur)
+        self._ensure_task_feishu_targets_table(cur)
         self._conn.commit()
 
     def _ensure_tasks_table(self, cur: sqlite3.Cursor) -> None:
@@ -475,4 +477,160 @@ class Database:
             """,
             (content, ai_summary, status, now, title),
         )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # feishu_targets                                                       #
+    # ------------------------------------------------------------------ #
+
+    def _ensure_feishu_targets_table(self, cur: sqlite3.Cursor) -> None:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS feishu_targets (
+              target_id     TEXT PRIMARY KEY,
+              name          TEXT NOT NULL,
+              webhook_url   TEXT NOT NULL,
+              keyword_regex TEXT NOT NULL DEFAULT '',
+              enabled       INTEGER NOT NULL DEFAULT 1,
+              created_at    TEXT NOT NULL,
+              updated_at    TEXT NOT NULL
+            )
+            """
+        )
+
+    def _ensure_task_feishu_targets_table(self, cur: sqlite3.Cursor) -> None:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_feishu_targets (
+              task_id   TEXT NOT NULL,
+              target_id TEXT NOT NULL,
+              PRIMARY KEY (task_id, target_id)
+            )
+            """
+        )
+
+    def list_feishu_targets(self) -> list[dict[str, object]]:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT target_id, name, webhook_url, keyword_regex, enabled, created_at, updated_at
+            FROM feishu_targets
+            ORDER BY created_at ASC
+            """
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            r["enabled"] = bool(r.get("enabled"))
+        return rows
+
+    def get_feishu_target(self, target_id: str) -> dict[str, object] | None:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT target_id, name, webhook_url, keyword_regex, enabled, created_at, updated_at
+            FROM feishu_targets WHERE target_id = ?
+            """,
+            (target_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["enabled"] = bool(d.get("enabled"))
+        return d
+
+    def create_feishu_target(
+        self,
+        *,
+        name: str,
+        webhook_url: str,
+        keyword_regex: str = "",
+        enabled: bool = True,
+    ) -> str:
+        now = datetime.now(tz=_TZ).isoformat(timespec="seconds")
+        target_id = str(uuid.uuid4())
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO feishu_targets
+              (target_id, name, webhook_url, keyword_regex, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (target_id, name, webhook_url, keyword_regex, 1 if enabled else 0, now, now),
+        )
+        self._conn.commit()
+        return target_id
+
+    def update_feishu_target(
+        self,
+        target_id: str,
+        *,
+        name: str,
+        webhook_url: str,
+        keyword_regex: str,
+        enabled: bool,
+    ) -> None:
+        now = datetime.now(tz=_TZ).isoformat(timespec="seconds")
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            UPDATE feishu_targets
+            SET name = ?, webhook_url = ?, keyword_regex = ?, enabled = ?, updated_at = ?
+            WHERE target_id = ?
+            """,
+            (name, webhook_url, keyword_regex, 1 if enabled else 0, now, target_id),
+        )
+        self._conn.commit()
+
+    def delete_feishu_target(self, target_id: str) -> None:
+        cur = self._conn.cursor()
+        cur.execute("DELETE FROM task_feishu_targets WHERE target_id = ?", (target_id,))
+        cur.execute("DELETE FROM feishu_targets WHERE target_id = ?", (target_id,))
+        self._conn.commit()
+
+    def set_target_enabled(self, target_id: str, enabled: bool) -> None:
+        now = datetime.now(tz=_TZ).isoformat(timespec="seconds")
+        cur = self._conn.cursor()
+        cur.execute(
+            "UPDATE feishu_targets SET enabled = ?, updated_at = ? WHERE target_id = ?",
+            (1 if enabled else 0, now, target_id),
+        )
+        self._conn.commit()
+
+    def get_task_targets(self, task_id: str) -> list[dict[str, object]]:
+        """返回该任务关联的、已启用的飞书目标列表（含完整字段）。"""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT ft.target_id, ft.name, ft.webhook_url, ft.keyword_regex, ft.enabled
+            FROM task_feishu_targets tft
+            JOIN feishu_targets ft ON ft.target_id = tft.target_id
+            WHERE tft.task_id = ? AND ft.enabled = 1
+            ORDER BY ft.created_at ASC
+            """,
+            (task_id,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            r["enabled"] = bool(r.get("enabled"))
+        return rows
+
+    def get_task_target_ids(self, task_id: str) -> list[str]:
+        """返回该任务关联的所有 target_id（含禁用项，用于表单回显）。"""
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT target_id FROM task_feishu_targets WHERE task_id = ? ORDER BY rowid ASC",
+            (task_id,),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+    def set_task_targets(self, task_id: str, target_ids: list[str]) -> None:
+        """覆盖任务关联的飞书目标列表（先删后插）。"""
+        cur = self._conn.cursor()
+        cur.execute("DELETE FROM task_feishu_targets WHERE task_id = ?", (task_id,))
+        for tid in target_ids:
+            cur.execute(
+                "INSERT OR IGNORE INTO task_feishu_targets (task_id, target_id) VALUES (?, ?)",
+                (task_id, tid),
+            )
         self._conn.commit()

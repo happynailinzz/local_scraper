@@ -19,6 +19,22 @@
     <div class="muted" style="margin-top:6px;">
       KEYWORDS_LABEL: {{ task.config.get('KEYWORDS_LABEL', '-') if task.config else '-' }}
     </div>
+    {% if all_targets %}
+    <div style="margin-top:10px;">
+      <div class="muted" style="margin-bottom:6px;">推送目标飞书群</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        {% for t in all_targets %}
+        <span class="pill" style="{% if t.target_id in selected_ids %}border-color:var(--accent);color:var(--accent);{% else %}opacity:0.4;{% endif %}">
+          {{ t.name }}{% if t.keyword_regex %} ({{ t.keyword_regex }}){% endif %}
+          {% if not t.enabled %} [停用]{% endif %}
+        </span>
+        {% endfor %}
+      </div>
+      {% if not selected_ids %}
+      <div class="muted" style="margin-top:4px;font-size:12px;">未选择目标群，将使用全局 FEISHU_WEBHOOK_URL</div>
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
 
   <div style="margin-top:10px;">

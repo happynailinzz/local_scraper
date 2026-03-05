@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from starlette.responses import Response, StreamingResponse
 
 import requests
+from dotenv import dotenv_values, set_key
 
 from ..config import Config
 from ..db import Database
@@ -27,6 +28,43 @@ from .task_scheduler import TaskScheduler
 
 _BASE_DIR = Path(__file__).resolve().parent
 _TEMPLATES = Jinja2Templates(directory=str(_BASE_DIR / "templates"))
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_ENV_FILE = _PROJECT_ROOT / ".env"
+_MODEL_PRESETS = [
+    "llama-3.3-70b-versatile",
+    "gpt-4o-mini",
+    "gpt-4.1-mini",
+    "deepseek-chat",
+    "custom",
+]
+
+
+def _normalize_base_url(list_url: str, fallback: str) -> str:
+    parsed = urlsplit(list_url)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return fallback
+
+
+def _load_env_config() -> dict[str, str]:
+    if not _ENV_FILE.exists():
+        return {}
+    values = dotenv_values(str(_ENV_FILE))
+    out: dict[str, str] = {}
+    for k, v in values.items():
+        if k is None:
+            continue
+        out[str(k)] = "" if v is None else str(v)
+    return out
+
+
+def _save_env_config(values: dict[str, str]) -> None:
+    _ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not _ENV_FILE.exists():
+        _ENV_FILE.touch()
+    for key, value in values.items():
+        set_key(str(_ENV_FILE), key, value)
+        os.environ[key] = value
 
 
 def _basic_auth(request: Request) -> None:
@@ -257,6 +295,121 @@ def home(_: Any = Depends(_basic_auth)) -> RedirectResponse:
     return RedirectResponse("/announcements", status_code=302)
 
 
+@app.get("/settings/init", response_class=HTMLResponse)
+def init_settings(
+    request: Request,
+    saved: int = 0,
+    _: Any = Depends(_basic_auth),
+) -> HTMLResponse:
+    cfg: Config | None = None
+    try:
+        cfg = Config.from_env()
+    except Exception:
+        cfg = None
+    env_cfg = _load_env_config()
+
+    list_url = env_cfg.get("LIST_URL") or (
+        cfg.list_url if cfg else "https://zcpt.zgpmsm.com.cn/jyxx/sec_listjyxx.html"
+    )
+    base_url = env_cfg.get("BASE_URL") or (
+        cfg.base_url if cfg else "https://zcpt.zgpmsm.com.cn"
+    )
+    feishu_webhook_url = env_cfg.get("FEISHU_WEBHOOK_URL")
+    if feishu_webhook_url is None:
+        feishu_webhook_url = (cfg.feishu_webhook_url or "") if cfg else ""
+    ai_base_url = env_cfg.get("AI_BASE_URL") or (
+        cfg.ai_base_url if cfg else "https://api.yuweixun.site/v1"
+    )
+    ai_model = env_cfg.get("AI_MODEL") or (
+        cfg.ai_model if cfg else "llama-3.3-70b-versatile"
+    )
+    ai_api_key = env_cfg.get("AI_API_KEY") or (cfg.ai_api_key if cfg else "")
+    ai_disabled = (
+        (env_cfg.get("AI_DISABLED") or (str(cfg.ai_disabled) if cfg else "false"))
+        .strip()
+        .lower()
+    )
+
+    preset = ai_model if ai_model in _MODEL_PRESETS else "custom"
+    custom_model = "" if preset != "custom" else ai_model
+
+    return _TEMPLATES.TemplateResponse(
+        "init_settings.html",
+        {
+            "request": request,
+            "saved": saved == 1,
+            "list_url": list_url,
+            "base_url": base_url,
+            "feishu_webhook_url": feishu_webhook_url,
+            "feishu_notify_mode": cfg.feishu_notify_mode if cfg else "digest",
+            "ai_base_url": ai_base_url,
+            "ai_model": ai_model,
+            "ai_model_preset": preset,
+            "ai_model_custom": custom_model,
+            "ai_api_key": ai_api_key,
+            "ai_disabled": "true"
+            if ai_disabled in {"1", "true", "yes", "on"}
+            else "false",
+            "model_presets": _MODEL_PRESETS,
+        },
+    )
+
+
+@app.post("/settings/init")
+def init_settings_save(
+    list_url: str = Form(...),
+    base_url: str = Form(""),
+    feishu_webhook_url: str = Form(""),
+    feishu_notify_mode: str = Form("digest"),
+    ai_base_url: str = Form("https://api.yuweixun.site/v1"),
+    ai_model_preset: str = Form("llama-3.3-70b-versatile"),
+    ai_model_custom: str = Form(""),
+    ai_api_key: str = Form(""),
+    ai_disabled: str = Form("false"),
+    _: Any = Depends(_basic_auth),
+) -> RedirectResponse:
+    list_url = list_url.strip()
+    if not list_url:
+        raise HTTPException(status_code=400, detail="LIST_URL 不能为空")
+
+    if ai_model_preset == "custom":
+        ai_model = ai_model_custom.strip()
+    else:
+        ai_model = ai_model_preset.strip()
+    if not ai_model:
+        raise HTTPException(status_code=400, detail="AI_MODEL 不能为空")
+
+    notify_mode = feishu_notify_mode.strip().lower()
+    if notify_mode not in {"digest", "per_item"}:
+        notify_mode = "digest"
+
+    disabled = ai_disabled.strip().lower() in {"1", "true", "yes", "on"}
+
+    base_url = base_url.strip() or _normalize_base_url(
+        list_url, "https://zcpt.zgpmsm.com.cn"
+    )
+    ai_base_url = ai_base_url.strip() or "https://api.yuweixun.site/v1"
+
+    values = {
+        "LIST_URL": list_url,
+        "BASE_URL": base_url,
+        "FEISHU_WEBHOOK_URL": feishu_webhook_url.strip(),
+        "FEISHU_NOTIFY_MODE": notify_mode,
+        "AI_BASE_URL": ai_base_url,
+        "AI_MODEL": ai_model,
+        "AI_API_KEY": ai_api_key.strip(),
+        "AI_DISABLED": "true" if disabled else "false",
+    }
+
+    if not disabled and not values["AI_API_KEY"]:
+        raise HTTPException(
+            status_code=400, detail="AI_API_KEY 不能为空（除非 AI_DISABLED=true）"
+        )
+
+    _save_env_config(values)
+    return RedirectResponse("/settings/init?saved=1", status_code=303)
+
+
 @app.on_event("startup")
 def _init_schema() -> None:
     cfg = Config.from_env()
@@ -375,7 +528,13 @@ def tasks(request: Request, _: Any = Depends(_basic_auth)) -> HTMLResponse:
     merged = []
     for t in rows:
         tid = str(t["task_id"])
-        merged.append({**t, "runtime": runtime_map.get(tid)})
+        merged.append(
+            {
+                **t,
+                "runtime": runtime_map.get(tid),
+                "next_run_time": _TASKS.get_next_run_time(tid),
+            }
+        )
     return _TEMPLATES.TemplateResponse(
         "tasks.html",
         {"request": request, "tasks": merged},
@@ -384,7 +543,13 @@ def tasks(request: Request, _: Any = Depends(_basic_auth)) -> HTMLResponse:
 
 @app.get("/tasks/new", response_class=HTMLResponse)
 def task_new(request: Request, _: Any = Depends(_basic_auth)) -> HTMLResponse:
-    return _TEMPLATES.TemplateResponse("task_new.html", {"request": request})
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    all_targets = db.list_feishu_targets()
+    db.close()
+    return _TEMPLATES.TemplateResponse(
+        "task_new.html", {"request": request, "all_targets": all_targets}
+    )
 
 
 def _truthy(v: str) -> bool:
@@ -392,29 +557,51 @@ def _truthy(v: str) -> bool:
 
 
 @app.post("/tasks/create")
-def task_create(
-    name: str = Form(...),
-    enabled: str = Form("true"),
-    schedule_type: str = Form("cron"),
-    cron_expr: str = Form("0 8,12,16,20 * * *"),
-    interval_seconds: int = Form(3600),
-    keywords: str = Form("采购"),
-    days_lookback: int = Form(7),
-    dedupe_strategy: str = Form("title"),
-    send_feishu: str = Form("true"),
-    feishu_notify_mode: str = Form("digest"),
-    max_items: int = Form(0),
-    loop_delay: float = Form(1.0),
-    max_pages_total: int = Form(200),
-    max_pages_per_category: int = Form(50),
-    adaptive_threshold_pages: int = Form(10),
-    batch_size: int = Form(50),
-    delay_increment_seconds: float = Form(1.0),
-    max_loop_delay_seconds: float = Form(10.0),
+async def task_create(
+    request: Request,
     _: Any = Depends(_basic_auth),
 ) -> RedirectResponse:
     import uuid
     from apscheduler.triggers.cron import CronTrigger
+
+    form = await request.form()
+
+    def _f(key: str, default: str = "") -> str:
+        v = form.get(key)
+        return str(v).strip() if v is not None else default
+
+    def _fi(key: str, default: int) -> int:
+        try:
+            return int(_f(key, str(default)))
+        except ValueError:
+            return default
+
+    def _ff(key: str, default: float) -> float:
+        try:
+            return float(_f(key, str(default)))
+        except ValueError:
+            return default
+
+    name = _f("name")
+    enabled = _f("enabled", "true")
+    schedule_type = _f("schedule_type", "cron")
+    cron_expr = _f("cron_expr", "0 8,12,16,20 * * *")
+    interval_seconds = _fi("interval_seconds", 3600)
+    keywords = _f("keywords", "采购")
+    days_lookback = _fi("days_lookback", 7)
+    dedupe_strategy = _f("dedupe_strategy", "title")
+    send_feishu = _f("send_feishu", "true")
+    feishu_notify_mode = _f("feishu_notify_mode", "digest")
+    max_items = _fi("max_items", 0)
+    loop_delay = _ff("loop_delay", 1.0)
+    max_pages_total = _fi("max_pages_total", 200)
+    max_pages_per_category = _fi("max_pages_per_category", 50)
+    adaptive_threshold_pages = _fi("adaptive_threshold_pages", 10)
+    batch_size = _fi("batch_size", 50)
+    delay_increment_seconds = _ff("delay_increment_seconds", 1.0)
+    max_loop_delay_seconds = _ff("max_loop_delay_seconds", 10.0)
+    # Multi-value: feishu_target_ids (checkboxes)
+    selected_target_ids = form.getlist("feishu_target_ids")
 
     cfg = Config.from_env()
     task_id = str(uuid.uuid4())
@@ -464,27 +651,24 @@ def task_create(
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=f"invalid cron_expr: {e}")
     else:
-        try:
-            interval = int(interval_seconds)
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(
-                status_code=400, detail=f"invalid interval_seconds: {e}"
-            )
-        if interval <= 0:
+        if interval_seconds <= 0:
             raise HTTPException(
                 status_code=400, detail="interval_seconds must be positive"
             )
+        interval = interval_seconds
 
     db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
     db.upsert_task(
         task_id=task_id,
-        name=name.strip() or task_id,
+        name=name or task_id,
         enabled=_truthy(enabled),
         schedule_type=st,
         cron_expr=cron,
         interval_seconds=interval,
         config=config,
     )
+    if selected_target_ids:
+        db.set_task_targets(task_id, [str(t) for t in selected_target_ids])
     db.close()
 
     _TASKS.sync_from_db()
@@ -498,13 +682,21 @@ def task_detail(
     cfg = Config.from_env()
     db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
     task = db.get_task(task_id)
+    all_targets = db.list_feishu_targets()
+    selected_ids = set(db.get_task_target_ids(task_id))
     db.close()
     if not task:
         raise HTTPException(status_code=404)
     runtime = _TASKS.get_runtime(task_id)
     return _TEMPLATES.TemplateResponse(
         "task_detail.html",
-        {"request": request, "task": task, "runtime": runtime},
+        {
+            "request": request,
+            "task": task,
+            "runtime": runtime,
+            "all_targets": all_targets,
+            "selected_ids": selected_ids,
+        },
     )
 
 
@@ -672,3 +864,130 @@ def stream_run(run_id: str, _: Any = Depends(_basic_auth)) -> StreamingResponse:
             time.sleep(0.5)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+# ------------------------------------------------------------------ #
+# Feishu targets management                                            #
+# ------------------------------------------------------------------ #
+
+
+@app.get("/settings/feishu", response_class=HTMLResponse)
+def feishu_targets_page(
+    request: Request,
+    saved: int = 0,
+    _: Any = Depends(_basic_auth),
+) -> HTMLResponse:
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    targets = db.list_feishu_targets()
+    db.close()
+    return _TEMPLATES.TemplateResponse(
+        "feishu_targets.html",
+        {"request": request, "targets": targets, "saved": saved == 1},
+    )
+
+
+@app.post("/settings/feishu")
+async def feishu_target_create(
+    request: Request,
+    _: Any = Depends(_basic_auth),
+) -> RedirectResponse:
+    form = await request.form()
+    name = str(form.get("name", "")).strip()
+    webhook_url = str(form.get("webhook_url", "")).strip()
+    keyword_regex = str(form.get("keyword_regex", "")).strip()
+    enabled = str(form.get("enabled", "true")).strip().lower() in {"1", "true", "yes", "on"}
+
+    if not name:
+        raise HTTPException(status_code=400, detail="群名称不能为空")
+    if not webhook_url:
+        raise HTTPException(status_code=400, detail="Webhook URL 不能为空")
+
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    db.create_feishu_target(
+        name=name,
+        webhook_url=webhook_url,
+        keyword_regex=keyword_regex,
+        enabled=enabled,
+    )
+    db.close()
+    return RedirectResponse("/settings/feishu?saved=1", status_code=303)
+
+
+@app.get("/settings/feishu/{target_id}/edit", response_class=HTMLResponse)
+def feishu_target_edit(
+    request: Request,
+    target_id: str,
+    saved: int = 0,
+    _: Any = Depends(_basic_auth),
+) -> HTMLResponse:
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    target = db.get_feishu_target(target_id)
+    db.close()
+    if not target:
+        raise HTTPException(status_code=404)
+    return _TEMPLATES.TemplateResponse(
+        "feishu_target_edit.html",
+        {"request": request, "target": target, "saved": saved == 1},
+    )
+
+
+@app.post("/settings/feishu/{target_id}/edit")
+async def feishu_target_edit_save(
+    request: Request,
+    target_id: str,
+    _: Any = Depends(_basic_auth),
+) -> RedirectResponse:
+    form = await request.form()
+    name = str(form.get("name", "")).strip()
+    webhook_url = str(form.get("webhook_url", "")).strip()
+    keyword_regex = str(form.get("keyword_regex", "")).strip()
+    enabled = str(form.get("enabled", "true")).strip().lower() in {"1", "true", "yes", "on"}
+
+    if not name:
+        raise HTTPException(status_code=400, detail="群名称不能为空")
+    if not webhook_url:
+        raise HTTPException(status_code=400, detail="Webhook URL 不能为空")
+
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    if not db.get_feishu_target(target_id):
+        db.close()
+        raise HTTPException(status_code=404)
+    db.update_feishu_target(
+        target_id,
+        name=name,
+        webhook_url=webhook_url,
+        keyword_regex=keyword_regex,
+        enabled=enabled,
+    )
+    db.close()
+    return RedirectResponse(f"/settings/feishu/{target_id}/edit?saved=1", status_code=303)
+
+
+@app.post("/settings/feishu/{target_id}/toggle")
+def feishu_target_toggle(
+    target_id: str, _: Any = Depends(_basic_auth)
+) -> RedirectResponse:
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    target = db.get_feishu_target(target_id)
+    if not target:
+        db.close()
+        raise HTTPException(status_code=404)
+    db.set_target_enabled(target_id, not bool(target.get("enabled")))
+    db.close()
+    return RedirectResponse("/settings/feishu", status_code=303)
+
+
+@app.post("/settings/feishu/{target_id}/delete")
+def feishu_target_delete(
+    target_id: str, _: Any = Depends(_basic_auth)
+) -> RedirectResponse:
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    db.delete_feishu_target(target_id)
+    db.close()
+    return RedirectResponse("/settings/feishu", status_code=303)

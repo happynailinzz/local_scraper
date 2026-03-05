@@ -20,6 +20,7 @@
         <th>enabled</th>
         <th>running</th>
         <th>last</th>
+        <th>next</th>
         <th>ops</th>
       </tr>
     </thead>
@@ -37,6 +38,7 @@
         <td><span class="pill">{{ 'ON' if t.enabled else 'OFF' }}</span></td>
         <td><span class="pill">{{ 'RUNNING' if t.runtime and t.runtime.running else 'IDLE' }}</span></td>
         <td class="muted">{{ t.runtime.last_status if t.runtime else '-' }}</td>
+        <td class="muted">{{ t.next_run_time if t.next_run_time else '-' }}</td>
         <td>
           <form method="post" action="/tasks/{{ t.task_id }}/toggle" style="display:inline;">
             <button type="submit">{{ '停用' if t.enabled else '启用' }}</button>
