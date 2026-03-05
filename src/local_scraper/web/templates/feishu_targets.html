@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block body %}
+
+{% if saved %}
+<div class="card" style="border-color:var(--accent);color:var(--accent);">已保存</div>
+{% endif %}
+
+<div class="card">
+  <div class="h">飞书群管理</div>
+  <div class="muted" style="margin-bottom:14px;">统一管理推送目标群，在任务中勾选群后任务将向每个群独立分发结果。</div>
+
+  {% if targets %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>群名称</th>
+        <th>Webhook</th>
+        <th>关键词过滤</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in targets %}
+      <tr>
+        <td class="rowtitle">{{ t.name }}</td>
+        <td class="muted" style="font-size:12px;max-width:240px;word-break:break-all;">{{ t.webhook_url[:60] }}{% if t.webhook_url|length > 60 %}…{% endif %}</td>
+        <td>{% if t.keyword_regex %}<span class="pill">{{ t.keyword_regex }}</span>{% else %}<span class="muted">全部</span>{% endif %}</td>
+        <td><span class="pill" style="{% if t.enabled %}color:var(--accent);{% else %}opacity:0.5;{% endif %}">{{ 'ON' if t.enabled else 'OFF' }}</span></td>
+        <td style="white-space:nowrap;">
+          <a href="/settings/feishu/{{ t.target_id }}/edit" style="color:var(--accent);text-decoration:none;">编辑</a>
+          &nbsp;
+          <form method="post" action="/settings/feishu/{{ t.target_id }}/toggle" style="display:inline;">
+            <button type="submit" style="padding:4px 8px;font-size:12px;">{{ '停用' if t.enabled else '启用' }}</button>
+          </form>
+          &nbsp;
+          <form method="post" action="/settings/feishu/{{ t.target_id }}/delete" style="display:inline;"
+            onsubmit="return confirm('确认删除「{{ t.name }}」？')">
+            <button type="submit" style="padding:4px 8px;font-size:12px;border-color:rgba(239,68,68,0.4);color:#f87171;">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="muted">暂无飞书群，使用下方表单新建第一个。</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="h">新建飞书群</div>
+  <form method="post" action="/settings/feishu" class="controls">
+    <div style="min-width:200px;">
+      <label>群名称</label>
+      <input name="name" placeholder="例：招标通知群" style="width:100%;" />
+    </div>
+    <div style="min-width:320px;flex:1;">
+      <label>Webhook URL</label>
+      <input name="webhook_url" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." style="width:100%;" />
+    </div>
+    <div style="min-width:200px;">
+      <label>关键词过滤（Python 正则，留空=不额外过滤）</label>
+      <input name="keyword_regex" placeholder="例：软件|系统" style="width:100%;" />
+      <div class="muted" style="font-size:11px;margin-top:4px;">非空时替换任务的关键词过滤，仅对该群生效</div>
+    </div>
+    <div>
+      <label>启用</label>
+      <select name="enabled">
+        <option value="true" selected>是</option>
+        <option value="false">否</option>
+      </select>
+    </div>
+    <div>
+      <button type="submit">新建</button>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

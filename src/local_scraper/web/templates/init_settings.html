@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block body %}
+
+<div class="card">
+  <div class="h">初始化配置</div>
+  <div class="muted">配置会写入项目根目录 <code>.env</code>，保存后新启动的采集任务会自动使用。</div>
+  {% if saved %}
+  <div class="pill" style="margin-top:10px;">保存成功</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <form method="post" action="/settings/init" class="controls">
+    <div style="width:100%;"><div class="h" style="font-size:16px; margin:0 0 8px;">抓取页面</div></div>
+    <div style="min-width:360px; flex:1;">
+      <label>LIST_URL</label>
+      <input style="width:100%;" name="list_url" value="{{ list_url }}" placeholder="https://example.com/list.html" />
+    </div>
+    <div style="min-width:320px; flex:1;">
+      <label>BASE_URL</label>
+      <input style="width:100%;" name="base_url" value="{{ base_url }}" placeholder="https://example.com" />
+    </div>
+
+    <div style="width:100%;"><div class="h" style="font-size:16px; margin:6px 0 8px;">飞书群和机器人</div></div>
+    <div style="min-width:420px; flex:1;">
+      <label>FEISHU_WEBHOOK_URL</label>
+      <input style="width:100%;" name="feishu_webhook_url" value="{{ feishu_webhook_url }}" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." />
+    </div>
+    <div>
+      <label>FEISHU_NOTIFY_MODE</label>
+      <select name="feishu_notify_mode">
+        <option value="digest" {% if feishu_notify_mode == 'digest' %}selected{% endif %}>digest</option>
+        <option value="per_item" {% if feishu_notify_mode == 'per_item' %}selected{% endif %}>per_item</option>
+      </select>
+    </div>
+
+    <div style="width:100%;"><div class="h" style="font-size:16px; margin:6px 0 8px;">模型配置</div></div>
+    <div style="min-width:320px; flex:1;">
+      <label>AI_BASE_URL</label>
+      <input style="width:100%;" name="ai_base_url" value="{{ ai_base_url }}" placeholder="https://api.yuweixun.site/v1" />
+    </div>
+    <div>
+      <label>AI_MODEL（选择）</label>
+      <select id="ai_model_preset" name="ai_model_preset" onchange="toggleCustomModel()">
+        {% for model in model_presets %}
+        <option value="{{ model }}" {% if ai_model_preset == model %}selected{% endif %}>{{ model }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div id="custom_model_wrap" style="min-width:260px; flex:1; display:none;">
+      <label>AI_MODEL（自定义）</label>
+      <input style="width:100%;" id="ai_model_custom" name="ai_model_custom" value="{{ ai_model_custom }}" placeholder="输入自定义模型名" />
+    </div>
+    <div style="min-width:320px; flex:1;">
+      <label>AI_API_KEY</label>
+      <input style="width:100%;" name="ai_api_key" value="{{ ai_api_key }}" placeholder="sk-..." />
+    </div>
+    <div>
+      <label>AI_DISABLED</label>
+      <select name="ai_disabled">
+        <option value="false" {% if ai_disabled == 'false' %}selected{% endif %}>false</option>
+        <option value="true" {% if ai_disabled == 'true' %}selected{% endif %}>true</option>
+      </select>
+    </div>
+
+    <div style="width:100%; margin-top:6px;">
+      <button type="submit">保存初始化配置</button>
+    </div>
+  </form>
+</div>
+
+<script>
+function toggleCustomModel() {
+  var preset = document.getElementById("ai_model_preset");
+  var wrap = document.getElementById("custom_model_wrap");
+  if (!preset || !wrap) {
+    return;
+  }
+  wrap.style.display = preset.value === "custom" ? "block" : "none";
+}
+toggleCustomModel();
+</script>
+
+{% endblock %}

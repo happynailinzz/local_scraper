@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.3.1 - 2026-03-05
+
+### 修复
+- 修复发布包缺少 WebUI 模板文件导致的 Internal Server Error（初始化配置/飞书群管理页面）
+- 修正 `.gitignore` 规则，避免误忽略 `src/local_scraper/` 目录下源码与模板文件
+
 ## v0.3.0 - 2026-03-04
 
 ### 新增

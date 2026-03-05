@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block body %}
+
+{% if saved %}
+<div class="card" style="border-color:var(--accent);color:var(--accent);">已保存</div>
+{% endif %}
+
+<div class="card">
+  <div class="h">编辑飞书群</div>
+  <div class="muted" style="margin-bottom:14px;">target_id: {{ target.target_id }}</div>
+  <form method="post" action="/settings/feishu/{{ target.target_id }}/edit" class="controls">
+    <div style="min-width:200px;">
+      <label>群名称</label>
+      <input name="name" value="{{ target.name }}" style="width:100%;" />
+    </div>
+    <div style="min-width:320px;flex:1;">
+      <label>Webhook URL</label>
+      <input name="webhook_url" value="{{ target.webhook_url }}" style="width:100%;" />
+    </div>
+    <div style="min-width:200px;">
+      <label>关键词过滤（Python 正则，留空=不额外过滤）</label>
+      <input name="keyword_regex" value="{{ target.keyword_regex }}" style="width:100%;" />
+      <div class="muted" style="font-size:11px;margin-top:4px;">非空时替换任务的关键词过滤，仅对该群生效</div>
+    </div>
+    <div>
+      <label>启用</label>
+      <select name="enabled">
+        <option value="true" {% if target.enabled %}selected{% endif %}>是</option>
+        <option value="false" {% if not target.enabled %}selected{% endif %}>否</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:10px;align-items:end;">
+      <button type="submit">保存</button>
+      <a href="/settings/feishu" style="color:var(--muted);text-decoration:none;">← 返回列表</a>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

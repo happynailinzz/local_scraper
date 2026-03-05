@@ -11,4 +11,4 @@ data/*.db
 data/*.db-*
 logs/
 .DS_Store
-local_scraper/
+/local_scraper/
