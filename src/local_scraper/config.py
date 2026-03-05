@@ -54,6 +54,7 @@ class Config:
     ai_retry_interval_ms: int
 
     feishu_webhook_url: str | None
+    notify_target_key: str = ""
 
     # Optional: fetch zcpt pages via a relay service (for overseas deployments)
     zcpt_relay_base_url: str | None = None
@@ -143,6 +144,7 @@ class Config:
                 os.environ.get("AI_RETRY_INTERVAL_MS"), 3000
             ),
             feishu_webhook_url=feishu_webhook,
+            notify_target_key=(os.environ.get("NOTIFY_TARGET_KEY") or "").strip(),
             feishu_notify_mode=feishu_notify_mode,
             feishu_card_image_url=(
                 os.environ.get("FEISHU_CARD_IMAGE_URL") or ""

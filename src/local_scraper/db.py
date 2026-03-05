@@ -303,6 +303,7 @@ class Database:
             f"""
             CREATE TABLE IF NOT EXISTS {table_name} (
               id INTEGER PRIMARY KEY,
+              target_key TEXT NOT NULL DEFAULT '',
               title TEXT NOT NULL,
               url TEXT NOT NULL,
               date TEXT NOT NULL,
@@ -316,43 +317,61 @@ class Database:
             """
         )
 
+    def _has_column(self, cur: sqlite3.Cursor, table: str, column: str) -> bool:
+        cur.execute(f"PRAGMA table_info('{table}')")
+        return any(str(r[1]) == column for r in cur.fetchall())
+
+    def _ensure_target_key_column(self, cur: sqlite3.Cursor) -> None:
+        if not self._has_column(cur, "announcements", "target_key"):
+            cur.execute(
+                "ALTER TABLE announcements ADD COLUMN target_key TEXT NOT NULL DEFAULT ''"
+            )
+
     def _dedupe_existing_rows(self, cur: sqlite3.Cursor) -> None:
         # Best-effort cleanup to allow unique index creation.
         if self._dedupe_strategy == "url":
             cur.execute(
                 """
                 DELETE FROM announcements
-                WHERE id NOT IN (SELECT MIN(id) FROM announcements GROUP BY url)
+                WHERE id NOT IN (SELECT MIN(id) FROM announcements GROUP BY target_key, url)
                 """
             )
         elif self._dedupe_strategy == "title_date":
             cur.execute(
                 """
                 DELETE FROM announcements
-                WHERE id NOT IN (SELECT MIN(id) FROM announcements GROUP BY title, date)
+                WHERE id NOT IN (SELECT MIN(id) FROM announcements GROUP BY target_key, title, date)
                 """
             )
         else:
             cur.execute(
                 """
                 DELETE FROM announcements
-                WHERE id NOT IN (SELECT MIN(id) FROM announcements GROUP BY title)
+                WHERE id NOT IN (SELECT MIN(id) FROM announcements GROUP BY target_key, title)
                 """
             )
+
+    def _drop_legacy_unique_indexes(self, cur: sqlite3.Cursor) -> None:
+        cur.execute("DROP INDEX IF EXISTS ux_announcements_title")
+        cur.execute("DROP INDEX IF EXISTS ux_announcements_url")
+        cur.execute("DROP INDEX IF EXISTS ux_announcements_title_date")
+        cur.execute("DROP INDEX IF EXISTS ux_announcements_target_title")
+        cur.execute("DROP INDEX IF EXISTS ux_announcements_target_url")
+        cur.execute("DROP INDEX IF EXISTS ux_announcements_target_title_date")
 
     def _create_strategy_unique_index(self, cur: sqlite3.Cursor) -> None:
         # Only create the active strategy index.
         if self._dedupe_strategy == "url":
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ux_announcements_url ON announcements(url)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_announcements_target_url ON announcements(target_key, url)"
             )
         elif self._dedupe_strategy == "title_date":
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ux_announcements_title_date ON announcements(title, date)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_announcements_target_title_date ON announcements(target_key, title, date)"
             )
         else:
             cur.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS ux_announcements_title ON announcements(title)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_announcements_target_title ON announcements(target_key, title)"
             )
 
     def _migrate_v1_to_v2(self, cur: sqlite3.Cursor) -> None:
@@ -360,8 +379,8 @@ class Database:
         self._create_announcements_v2(cur, table_name="announcements_new")
         cur.execute(
             """
-            INSERT INTO announcements_new (id, title, url, date, content, ai_summary, status, source, created_at, updated_at)
-            SELECT id, title, url, date, content, ai_summary, status, source, created_at, updated_at
+            INSERT INTO announcements_new (id, target_key, title, url, date, content, ai_summary, status, source, created_at, updated_at)
+            SELECT id, '', title, url, date, content, ai_summary, status, source, created_at, updated_at
             FROM announcements
             """
         )
@@ -379,7 +398,9 @@ class Database:
         if self._dedupe_strategy != "title" and self._has_unique_title_constraint(cur):
             self._migrate_v1_to_v2(cur)
 
+        self._ensure_target_key_column(cur)
         self._create_common_indexes(cur)
+        self._drop_legacy_unique_indexes(cur)
         self._dedupe_existing_rows(cur)
         self._create_strategy_unique_index(cur)
 
@@ -434,38 +455,44 @@ class Database:
         )
         self._conn.commit()
 
-    def is_duplicate(self, *, title: str, url: str, date: str) -> bool:
+    def is_duplicate(self, *, target_key: str, title: str, url: str, date: str) -> bool:
         cur = self._conn.cursor()
         if self._dedupe_strategy == "url":
-            cur.execute("SELECT 1 FROM announcements WHERE url = ? LIMIT 1", (url,))
+            cur.execute(
+                "SELECT 1 FROM announcements WHERE target_key = ? AND url = ? LIMIT 1",
+                (target_key, url),
+            )
         elif self._dedupe_strategy == "title_date":
             cur.execute(
-                "SELECT 1 FROM announcements WHERE title = ? AND date = ? LIMIT 1",
-                (title, date),
+                "SELECT 1 FROM announcements WHERE target_key = ? AND title = ? AND date = ? LIMIT 1",
+                (target_key, title, date),
             )
         else:
-            cur.execute("SELECT 1 FROM announcements WHERE title = ? LIMIT 1", (title,))
+            cur.execute(
+                "SELECT 1 FROM announcements WHERE target_key = ? AND title = ? LIMIT 1",
+                (target_key, title),
+            )
         return cur.fetchone() is not None
 
     def insert_announcement_base(
-        self, title: str, url: str, date: str, status: str
+        self, target_key: str, title: str, url: str, date: str, status: str
     ) -> bool:
         now = datetime.now(tz=_TZ).isoformat(timespec="seconds")
         cur = self._conn.cursor()
         before = self._conn.total_changes
         cur.execute(
             """
-            INSERT OR IGNORE INTO announcements (title, url, date, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO announcements (target_key, title, url, date, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (title, url, date, status, now, now),
+            (target_key, title, url, date, status, now, now),
         )
         self._conn.commit()
         after = self._conn.total_changes
         return (after - before) > 0
 
     def update_announcement_detail(
-        self, title: str, content: str, ai_summary: str, status: str
+        self, target_key: str, title: str, content: str, ai_summary: str, status: str
     ) -> None:
         now = datetime.now(tz=_TZ).isoformat(timespec="seconds")
         cur = self._conn.cursor()
@@ -473,9 +500,9 @@ class Database:
             """
             UPDATE announcements
             SET content = ?, ai_summary = ?, status = ?, updated_at = ?
-            WHERE title = ?
+            WHERE target_key = ? AND title = ?
             """,
-            (content, ai_summary, status, now, title),
+            (content, ai_summary, status, now, target_key, title),
         )
         self._conn.commit()
 
@@ -556,7 +583,15 @@ class Database:
               (target_id, name, webhook_url, keyword_regex, enabled, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (target_id, name, webhook_url, keyword_regex, 1 if enabled else 0, now, now),
+            (
+                target_id,
+                name,
+                webhook_url,
+                keyword_regex,
+                1 if enabled else 0,
+                now,
+                now,
+            ),
         )
         self._conn.commit()
         return target_id

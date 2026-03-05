@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## v0.3.2 - 2026-03-05
+
+### 修复
+- 多飞书群任务改为按目标独立去重：新增 `announcements.target_key` 维度，避免同一轮中后续目标群被前序目标提前判重导致漏推送
+- 调度器为每个目标注入 `NOTIFY_TARGET_KEY`，工作流与数据库写入/更新逻辑统一按 `target_key` 进行去重与状态更新
+
+### 测试
+- 新增去重隔离单测：验证相同标题在不同目标群下可分别入库并触发各自通知
+
 ## v0.3.1 - 2026-03-05
 
 ### 修复

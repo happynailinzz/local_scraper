@@ -281,6 +281,7 @@ def run_once(cfg: Config) -> dict[str, object]:
     db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
     db.init_schema()
     run = db.start_run(run_id_override=cfg.run_id_override)
+    target_key = cfg.notify_target_key
 
     feishu: FeishuClient | None = None
     if cfg.feishu_webhook_url:
@@ -426,7 +427,9 @@ def run_once(cfg: Config) -> dict[str, object]:
                 if link.startswith("http")
                 else urljoin(cfg.base_url.rstrip("/") + "/", link)
             )
-            exists = db.is_duplicate(title=title, url=abs_url, date=d)
+            exists = db.is_duplicate(
+                target_key=target_key, title=title, url=abs_url, date=d
+            )
 
             if exists:
                 total_duplicate += 1
@@ -444,7 +447,7 @@ def run_once(cfg: Config) -> dict[str, object]:
                 continue
 
             inserted = db.insert_announcement_base(
-                title=title, url=abs_url, date=d, status="NEW"
+                target_key=target_key, title=title, url=abs_url, date=d, status="NEW"
             )
             if not inserted:
                 total_duplicate += 1
@@ -477,6 +480,7 @@ def run_once(cfg: Config) -> dict[str, object]:
                 log.debug("item.summarized", title=title, summary_len=len(ai_summary))
 
                 db.update_announcement_detail(
+                    target_key=target_key,
                     title=title,
                     content=content,
                     ai_summary=ai_summary,
@@ -508,6 +512,7 @@ def run_once(cfg: Config) -> dict[str, object]:
                 item_errors.append(f"item_failed: {title}: {e}")
                 log.warn("item.failed", title=title, error=str(e))
                 db.update_announcement_detail(
+                    target_key=target_key,
                     title=title,
                     content="",
                     ai_summary="AI 总结失败",

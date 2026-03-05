@@ -272,17 +272,21 @@ class TaskScheduler:
             rt.last_started_at = time.time()
             rt.last_finished_at = None
             rt.last_exit_code = None
-            rt.lines.append(f"[scheduler] multi-target dispatch: {len(targets)} group(s)")
+            rt.lines.append(
+                f"[scheduler] multi-target dispatch: {len(targets)} group(s)"
+            )
 
         exit_codes: list[int] = []
 
         for target in targets:
+            target_id = str(target.get("target_id", ""))
             name = str(target.get("name", ""))
             webhook = str(target.get("webhook_url", ""))
             kw_regex = str(target.get("keyword_regex") or "")
 
             overrides = dict(base_overrides)
             overrides["FEISHU_WEBHOOK_URL"] = webhook
+            overrides["NOTIFY_TARGET_KEY"] = target_id
             if kw_regex:
                 overrides["KEYWORD_REGEX"] = kw_regex
 
