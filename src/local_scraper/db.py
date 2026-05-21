@@ -108,34 +108,50 @@ class Database:
         cur.execute(
             """
             SELECT run_id, started_at, finished_at, duration_seconds,
-                   total_processed, total_new, total_duplicate, status, error
+                   total_processed, total_new, total_duplicate, status, error,
+                   task_id, task_name, scrape_target_names_json, feishu_target_names_json
             FROM runs
             ORDER BY started_at DESC
             LIMIT ? OFFSET ?
             """,
             (int(limit), int(offset)),
         )
-        return total, [dict(r) for r in cur.fetchall()]
+        rows = [self._decode_run_row(dict(r)) for r in cur.fetchall()]
+        return total, rows
 
     def get_run(self, run_id: str) -> dict[str, object] | None:
         cur = self._conn.cursor()
         cur.execute(
             """
             SELECT run_id, started_at, finished_at, duration_seconds,
-                   total_processed, total_new, total_duplicate, status, error
+                   total_processed, total_new, total_duplicate, status, error,
+                   task_id, task_name, scrape_target_names_json, feishu_target_names_json
             FROM runs
             WHERE run_id = ?
             """,
             (run_id,),
         )
         row = cur.fetchone()
-        return dict(row) if row else None
+        return self._decode_run_row(dict(row)) if row else None
+
+    def _decode_run_row(self, row: dict[str, object]) -> dict[str, object]:
+        for json_key, out_key in [
+            ("scrape_target_names_json", "scrape_target_names"),
+            ("feishu_target_names_json", "feishu_target_names"),
+        ]:
+            try:
+                row[out_key] = json.loads(str(row.get(json_key) or "[]"))
+            except Exception:  # noqa: BLE001
+                row[out_key] = []
+        return row
 
     def init_schema(self) -> None:
         cur = self._conn.cursor()
         self._ensure_runs_table(cur)
         self._ensure_announcements_table(cur)
         self._ensure_tasks_table(cur)
+        self._ensure_scrape_targets_table(cur)
+        self._ensure_task_scrape_targets_table(cur)
         self._ensure_feishu_targets_table(cur)
         self._ensure_task_feishu_targets_table(cur)
         self._conn.commit()
@@ -246,6 +262,8 @@ class Database:
 
     def delete_task(self, task_id: str) -> None:
         cur = self._conn.cursor()
+        cur.execute("DELETE FROM task_scrape_targets WHERE task_id = ?", (task_id,))
+        cur.execute("DELETE FROM task_feishu_targets WHERE task_id = ?", (task_id,))
         cur.execute("DELETE FROM tasks WHERE task_id = ?", (task_id,))
         self._conn.commit()
 
@@ -261,10 +279,26 @@ class Database:
               total_new INTEGER NOT NULL,
               total_duplicate INTEGER NOT NULL,
               status TEXT NOT NULL,
-              error TEXT NULL
+              error TEXT NULL,
+              task_id TEXT NULL,
+              task_name TEXT NULL,
+              scrape_target_names_json TEXT NOT NULL DEFAULT '[]',
+              feishu_target_names_json TEXT NOT NULL DEFAULT '[]'
             )
             """
         )
+        if not self._has_column(cur, "runs", "task_id"):
+            cur.execute("ALTER TABLE runs ADD COLUMN task_id TEXT NULL")
+        if not self._has_column(cur, "runs", "task_name"):
+            cur.execute("ALTER TABLE runs ADD COLUMN task_name TEXT NULL")
+        if not self._has_column(cur, "runs", "scrape_target_names_json"):
+            cur.execute(
+                "ALTER TABLE runs ADD COLUMN scrape_target_names_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        if not self._has_column(cur, "runs", "feishu_target_names_json"):
+            cur.execute(
+                "ALTER TABLE runs ADD COLUMN feishu_target_names_json TEXT NOT NULL DEFAULT '[]'"
+            )
 
     def _announcements_exists(self, cur: sqlite3.Cursor) -> bool:
         cur.execute(
@@ -404,16 +438,34 @@ class Database:
         self._dedupe_existing_rows(cur)
         self._create_strategy_unique_index(cur)
 
-    def start_run(self, run_id_override: str | None = None) -> RunRecord:
+    def start_run(
+        self,
+        run_id_override: str | None = None,
+        *,
+        task_id: str | None = None,
+        task_name: str | None = None,
+        scrape_target_names: list[str] | None = None,
+        feishu_target_names: list[str] | None = None,
+    ) -> RunRecord:
         run_id = (run_id_override or "").strip() or str(uuid.uuid4())
         started_at = datetime.now(tz=_TZ).isoformat(timespec="seconds")
         cur = self._conn.cursor()
         cur.execute(
             """
-            INSERT INTO runs (run_id, started_at, total_processed, total_new, total_duplicate, status)
-            VALUES (?, ?, 0, 0, 0, 'RUNNING')
+            INSERT INTO runs (
+              run_id, started_at, total_processed, total_new, total_duplicate, status,
+              task_id, task_name, scrape_target_names_json, feishu_target_names_json
+            )
+            VALUES (?, ?, 0, 0, 0, 'RUNNING', ?, ?, ?, ?)
             """,
-            (run_id, started_at),
+            (
+                run_id,
+                started_at,
+                (task_id or "").strip() or None,
+                (task_name or "").strip() or None,
+                json.dumps(scrape_target_names or [], ensure_ascii=False),
+                json.dumps(feishu_target_names or [], ensure_ascii=False),
+            ),
         )
         self._conn.commit()
         return RunRecord(run_id=run_id, started_at=started_at)
@@ -504,6 +556,205 @@ class Database:
             """,
             (content, ai_summary, status, now, target_key, title),
         )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------ #
+    # scrape_targets                                                      #
+    # ------------------------------------------------------------------ #
+
+    def _ensure_scrape_targets_table(self, cur: sqlite3.Cursor) -> None:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scrape_targets (
+              target_id               TEXT PRIMARY KEY,
+              name                    TEXT NOT NULL,
+              list_url                TEXT NOT NULL,
+              base_url                TEXT NOT NULL,
+              keyword_regex           TEXT NOT NULL DEFAULT '',
+              days_lookback           INTEGER NULL,
+              max_pages_total         INTEGER NULL,
+              max_pages_per_category  INTEGER NULL,
+              enabled                 INTEGER NOT NULL DEFAULT 1,
+              created_at              TEXT NOT NULL,
+              updated_at              TEXT NOT NULL
+            )
+            """
+        )
+
+    def _ensure_task_scrape_targets_table(self, cur: sqlite3.Cursor) -> None:
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS task_scrape_targets (
+              task_id   TEXT NOT NULL,
+              target_id TEXT NOT NULL,
+              PRIMARY KEY (task_id, target_id)
+            )
+            """
+        )
+
+    def list_scrape_targets(self) -> list[dict[str, object]]:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT target_id, name, list_url, base_url, keyword_regex,
+                   days_lookback, max_pages_total, max_pages_per_category,
+                   enabled, created_at, updated_at
+            FROM scrape_targets
+            ORDER BY created_at ASC
+            """
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            r["enabled"] = bool(r.get("enabled"))
+        return rows
+
+    def get_scrape_target(self, target_id: str) -> dict[str, object] | None:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT target_id, name, list_url, base_url, keyword_regex,
+                   days_lookback, max_pages_total, max_pages_per_category,
+                   enabled, created_at, updated_at
+            FROM scrape_targets
+            WHERE target_id = ?
+            """,
+            (target_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["enabled"] = bool(d.get("enabled"))
+        return d
+
+    def create_scrape_target(
+        self,
+        *,
+        name: str,
+        list_url: str,
+        base_url: str,
+        keyword_regex: str = "",
+        days_lookback: int | None = None,
+        max_pages_total: int | None = None,
+        max_pages_per_category: int | None = None,
+        enabled: bool = True,
+    ) -> str:
+        now = datetime.now(tz=_TZ).isoformat(timespec="seconds")
+        target_id = str(uuid.uuid4())
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO scrape_targets
+              (target_id, name, list_url, base_url, keyword_regex,
+               days_lookback, max_pages_total, max_pages_per_category,
+               enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                target_id,
+                name,
+                list_url,
+                base_url,
+                keyword_regex,
+                days_lookback,
+                max_pages_total,
+                max_pages_per_category,
+                1 if enabled else 0,
+                now,
+                now,
+            ),
+        )
+        self._conn.commit()
+        return target_id
+
+    def update_scrape_target(
+        self,
+        target_id: str,
+        *,
+        name: str,
+        list_url: str,
+        base_url: str,
+        keyword_regex: str,
+        days_lookback: int | None,
+        max_pages_total: int | None,
+        max_pages_per_category: int | None,
+        enabled: bool,
+    ) -> None:
+        now = datetime.now(tz=_TZ).isoformat(timespec="seconds")
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            UPDATE scrape_targets
+            SET name = ?, list_url = ?, base_url = ?, keyword_regex = ?,
+                days_lookback = ?, max_pages_total = ?, max_pages_per_category = ?,
+                enabled = ?, updated_at = ?
+            WHERE target_id = ?
+            """,
+            (
+                name,
+                list_url,
+                base_url,
+                keyword_regex,
+                days_lookback,
+                max_pages_total,
+                max_pages_per_category,
+                1 if enabled else 0,
+                now,
+                target_id,
+            ),
+        )
+        self._conn.commit()
+
+    def delete_scrape_target(self, target_id: str) -> None:
+        cur = self._conn.cursor()
+        cur.execute("DELETE FROM task_scrape_targets WHERE target_id = ?", (target_id,))
+        cur.execute("DELETE FROM scrape_targets WHERE target_id = ?", (target_id,))
+        self._conn.commit()
+
+    def set_scrape_target_enabled(self, target_id: str, enabled: bool) -> None:
+        now = datetime.now(tz=_TZ).isoformat(timespec="seconds")
+        cur = self._conn.cursor()
+        cur.execute(
+            "UPDATE scrape_targets SET enabled = ?, updated_at = ? WHERE target_id = ?",
+            (1 if enabled else 0, now, target_id),
+        )
+        self._conn.commit()
+
+    def get_task_scrape_targets(self, task_id: str) -> list[dict[str, object]]:
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT st.target_id, st.name, st.list_url, st.base_url, st.keyword_regex,
+                   st.days_lookback, st.max_pages_total, st.max_pages_per_category,
+                   st.enabled
+            FROM task_scrape_targets tst
+            JOIN scrape_targets st ON st.target_id = tst.target_id
+            WHERE tst.task_id = ? AND st.enabled = 1
+            ORDER BY st.created_at ASC
+            """,
+            (task_id,),
+        )
+        rows = [dict(r) for r in cur.fetchall()]
+        for r in rows:
+            r["enabled"] = bool(r.get("enabled"))
+        return rows
+
+    def get_task_scrape_target_ids(self, task_id: str) -> list[str]:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT target_id FROM task_scrape_targets WHERE task_id = ? ORDER BY rowid ASC",
+            (task_id,),
+        )
+        return [r[0] for r in cur.fetchall()]
+
+    def set_task_scrape_targets(self, task_id: str, target_ids: list[str]) -> None:
+        cur = self._conn.cursor()
+        cur.execute("DELETE FROM task_scrape_targets WHERE task_id = ?", (task_id,))
+        for tid in target_ids:
+            cur.execute(
+                "INSERT OR IGNORE INTO task_scrape_targets (task_id, target_id) VALUES (?, ?)",
+                (task_id, tid),
+            )
         self._conn.commit()
 
     # ------------------------------------------------------------------ #

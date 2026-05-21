@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+import json
+import os
 import re
 import time
 import traceback
@@ -23,11 +25,22 @@ from .feishu_client import (
 from .http_client import HttpClient, HttpConfig
 from .logger import Logger
 from .parser import (
+    parse_ccgp_list_page,
+    parse_chinabidding_cn_homepage,
+    parse_chinabidding_cn_list_page,
     extract_detail_content,
+    parse_cuecp_api_payload,
+    parse_dlztb_list_page,
+    parse_powerec_content_api_payload,
     parse_category_links,
+    parse_generic_list_page,
+    parse_henan_notice_page,
     parse_list_page,
     parse_next_page_url,
     parse_notice_list_page,
+    parse_jszhaobiao_search_page,
+    parse_qianlima_list_page,
+    parse_site_list_markdown,
     parse_zcpt_list_page,
 )
 from .time_utils import normalize_date, shanghai_recent_days
@@ -38,6 +51,13 @@ class ListCollectionResult:
     items: list[tuple[str, str, str]]
     pages_seen: int
     page_turns: int
+
+
+@dataclass(frozen=True)
+class SiteTarget:
+    name: str
+    list_url: str
+    base_url: str
 
 
 def _read_fixture(path: Path) -> str:
@@ -57,8 +77,264 @@ def _fixtures_dir() -> Path:
     return repo_root / "n8n 工作流" / "tests"
 
 
-def _collect_list_items(
-    cfg: Config, http: HttpClient, log: Logger, earliest_keep: date
+def _load_site_targets(cfg: Config) -> list[SiteTarget]:
+    run_scrape_targets_json = (os.environ.get("RUN_SCRAPE_TARGETS_JSON") or "").strip()
+    if run_scrape_targets_json:
+        payload = json.loads(run_scrape_targets_json)
+        targets: list[SiteTarget] = []
+        for row in payload:
+            list_url = str(row.get("list_url") or "").strip()
+            base_url = str(row.get("base_url") or "").strip() or list_url
+            name = str(row.get("name") or list_url).strip() or "custom"
+            if not list_url:
+                continue
+            targets.append(SiteTarget(name=name, list_url=list_url, base_url=base_url))
+        if targets:
+            return targets
+
+    if not cfg.site_list_markdown_path:
+        return [
+            SiteTarget(name="default", list_url=cfg.list_url, base_url=cfg.base_url)
+        ]
+
+    markdown = Path(cfg.site_list_markdown_path).read_text(encoding="utf-8")
+    entries = parse_site_list_markdown(markdown)
+    if not entries:
+        raise RuntimeError(
+            f"No site entries found in markdown file: {cfg.site_list_markdown_path}"
+        )
+
+    targets: list[SiteTarget] = []
+    for entry in entries:
+        list_url, base_url = _normalize_site_entry(entry.name, entry.url)
+        targets.append(
+            SiteTarget(name=entry.name, list_url=list_url, base_url=base_url)
+        )
+    return targets
+
+
+def _normalize_site_entry(name: str, url: str) -> tuple[str, str]:
+    if name == "河南省公共资源交易中心" and "hnggzy.com/hnsggzy" in url:
+        return (
+            "http://hnsggzyjy.henan.gov.cn/",
+            "http://hnsggzyjy.henan.gov.cn/",
+        )
+    if name == "中国平煤神马集团智采平台" and "zgpmsm.com.cn" in url:
+        return (
+            "https://zcpt.zgpmsm.com.cn/jyxx/sec_listjyxx.html",
+            "https://zcpt.zgpmsm.com.cn",
+        )
+    return url, url
+
+
+def _parse_page_items(html: str, current_url: str) -> list[tuple[str, str, str]]:
+    parsed: list[tuple[str, str, str]] = []
+    for it in parse_list_page(html):
+        parsed.append((it.title, it.link, it.date_raw))
+    for it in parse_notice_list_page(html):
+        parsed.append((it.title, it.link, it.date_raw))
+    for it in parse_zcpt_list_page(html):
+        parsed.append((it.title, it.link, it.date_raw))
+
+    if parsed:
+        return parsed
+
+    if "ccgp.gov.cn" in current_url:
+        for it in parse_ccgp_list_page(html, current_url=current_url):
+            parsed.append((it.title, it.link, it.date_raw))
+        if parsed:
+            return parsed
+
+    if "hnsggzyjy.henan.gov.cn" in current_url:
+        for it in parse_henan_notice_page(html, current_url=current_url):
+            parsed.append((it.title, it.link, it.date_raw))
+        if parsed:
+            return parsed
+
+    for it in parse_generic_list_page(html, current_url=current_url):
+        parsed.append((it.title, it.link, it.date_raw))
+    return parsed
+
+
+def _collect_special_site_items(
+    target: SiteTarget, http: HttpClient, log: Logger
+) -> list[tuple[str, str, str]] | None:
+    if "cuecp.cn" in target.list_url:
+        raw: list[tuple[str, str, str]] = []
+        for api_url in [
+            "https://www.cuecp.cn/app/api/index/noticedbeans",
+            "https://www.cuecp.cn/app/api/index/buildIndex",
+            "https://www.cuecp.cn/app/api/index/buildIndexInMsg",
+        ]:
+            try:
+                payload = http.get_text(api_url)
+            except Exception as e:  # noqa: BLE001
+                log.warn("site.api_failed", site=target.name, url=api_url, error=str(e))
+                continue
+            for it in parse_cuecp_api_payload(payload, current_url=target.list_url):
+                raw.append((it.title, it.link, it.date_raw))
+        return raw
+
+    if "pdsggzy.com" in target.list_url:
+        raise RuntimeError(
+            "site entry resolves to a domain-sale page; no real notice entry available"
+        )
+
+    if "qianlima.com" in target.list_url:
+        html = http.get_text("https://www.qianlima.com/zbgg/")
+        return [
+            (it.title, it.link, it.date_raw)
+            for it in parse_qianlima_list_page(
+                html, current_url="https://www.qianlima.com/zbgg/"
+            )
+        ]
+
+    if "dlztb.com" in target.list_url:
+        raw: list[tuple[str, str, str]] = []
+        for page_url in [
+            "http://www.dlztb.com/zbgg/",
+            "http://www.dlztb.com/xmxx/",
+            "http://www.dlztb.com/news/",
+            "http://www.dlztb.com/buy/",
+            "http://www.dlztb.com/zbdl/",
+            "http://www.dlztb.com/zbxx/",
+        ]:
+            try:
+                html = http.get_text(page_url)
+            except Exception as e:  # noqa: BLE001
+                log.warn(
+                    "site.api_failed", site=target.name, url=page_url, error=str(e)
+                )
+                continue
+            raw.extend(
+                (it.title, it.link, it.date_raw)
+                for it in parse_dlztb_list_page(html, current_url=page_url)
+            )
+        return raw
+
+    if "chinabidding.com.cn" in target.list_url or "chinabidding.cc" in target.list_url:
+        raw: list[tuple[str, str, str]] = []
+        for page_url in [
+            "https://www.chinabidding.cn/",
+            "https://www.chinabidding.cn/zbxx/",
+            "https://www.chinabidding.cn/cgxx/",
+            "https://www.chinabidding.cn/zbxx/zhongbgg/",
+            "https://www.chinabidding.cn/zbxx/zbgg/",
+            "https://www.chinabidding.cn/zbxx/zbgs/",
+            "https://www.chinabidding.cn/zbxx/bggg/",
+            "https://www.chinabidding.cn/zbxx/zbyg/",
+        ]:
+            try:
+                html = http.get_text(page_url)
+            except Exception as e:  # noqa: BLE001
+                log.warn(
+                    "site.api_failed", site=target.name, url=page_url, error=str(e)
+                )
+                continue
+            parsed = parse_chinabidding_cn_list_page(html, current_url=page_url)
+            if not parsed and page_url == "https://www.chinabidding.cn/":
+                parsed = parse_chinabidding_cn_homepage(html, current_url=page_url)
+            raw.extend((it.title, it.link, it.date_raw) for it in parsed)
+        return raw
+
+    if "jszhaobiao.com" in target.list_url:
+        raw: list[tuple[str, str, str]] = []
+        for page_url in [
+            "https://www.jszhaobiao.com/",
+            "https://www.jszhaobiao.com/search.html?area=17&scope=1&keyword=%E6%8B%9B%E6%A0%87",
+            "https://www.jszhaobiao.com/search.html?btns=1&scope=1&area=17&keyword=%e6%8b%9b%e6%a0%87",
+            "https://www.jszhaobiao.com/search.html?btns=2&scope=1&area=17&keyword=%e6%8b%9b%e6%a0%87",
+            "https://www.jszhaobiao.com/search.html?btns=3&scope=1&area=17&keyword=%e6%8b%9b%e6%a0%87",
+        ]:
+            try:
+                html = http.get_text(page_url)
+            except Exception as e:  # noqa: BLE001
+                log.warn(
+                    "site.api_failed", site=target.name, url=page_url, error=str(e)
+                )
+                continue
+            raw.extend(
+                (it.title, it.link, it.date_raw)
+                for it in parse_jszhaobiao_search_page(html, current_url=page_url)
+            )
+        return raw
+
+    if "cncecyc.com" in target.list_url:
+        headers = {
+            "Accept": "application/json, text/plain, */*",
+            "Referer": target.list_url,
+        }
+        status_code, payload, text = http.post_json_relaxed(
+            "https://www.cncecyc.com/share-ecommerce/inquiry/getPubInquiry",
+            headers=headers,
+            payload={},
+            timeout_ms=http._cfg.timeout_ms,
+        )
+        if isinstance(payload, dict) and payload.get("code") == 603:
+            raise RuntimeError("site requires login for public procurement APIs")
+        if status_code and status_code >= 400:
+            raise RuntimeError(f"site API returned status={status_code}")
+        return []
+
+    if "jnkgjtdzzbgs.com" in target.list_url:
+        headers = {
+            "Content-Type": "application/json; charset=utf-8",
+            "Accept": "application/json, text/plain, */*",
+            "Referer": "https://dzzb.jnkgjtdzzbgs.com/cms/default/webfile/1ywgg1/index.html",
+        }
+        payload = {
+            "pageNo": 1,
+            "pageSize": 100,
+            "dto": {
+                "siteId": "725",
+                "categoryId": "222",
+                "bidType": "",
+                "province": "",
+                "city": "",
+                "county": "",
+                "publishDays": "",
+                "purchaseMode": "",
+                "publishOrganization": "",
+                "agentCompanyId": "",
+                "secondCompanyId": "",
+                "agentCompanyName": "",
+                "secondCompanyName": "",
+                "mainCode": "",
+                "title": "",
+                "cgTitleParams": "",
+                "zjTitleParams": "",
+                "beginDate": "",
+                "endDate": "",
+                "selfPurchase": "",
+            },
+        }
+        status_code, payload_json, text = http.post_json_relaxed(
+            "https://dzzb.jnkgjtdzzbgs.com/cms/api/dynamicData/queryContentPage",
+            headers=headers,
+            payload=payload,
+            timeout_ms=http._cfg.timeout_ms,
+        )
+        if not payload_json or payload_json.get("msg") != "操作成功":
+            raise RuntimeError(
+                f"site API returned unexpected response status={status_code}"
+            )
+        return [
+            (it.title, it.link, it.date_raw)
+            for it in parse_powerec_content_api_payload(
+                text,
+                current_url="https://dzzb.jnkgjtdzzbgs.com/cms/default/webfile/1ywgg1/index.html",
+            )
+        ]
+
+    return None
+
+
+def _collect_list_items_for_target(
+    target: SiteTarget,
+    cfg: Config,
+    http: HttpClient,
+    log: Logger,
+    earliest_keep: date,
 ) -> ListCollectionResult:
     """Return list items as (title, link, date_raw) from start page and discovered category pages."""
 
@@ -72,20 +348,33 @@ def _collect_list_items(
             page_turns=0,
         )
 
-    start_html = http.get_text(cfg.list_url)
-    log.info("list.fetch", url=cfg.list_url)
+    special_items = _collect_special_site_items(target, http, log)
+    if special_items is not None:
+        out: list[tuple[str, str, str]] = []
+        seen_items: set[tuple[str, str, str]] = set()
+        for item in special_items:
+            if item in seen_items:
+                continue
+            seen_items.add(item)
+            out.append(item)
+        log.info(
+            "list.collected",
+            site=target.name,
+            items=len(out),
+            pages=1,
+            page_turns=0,
+            raw_items=len(special_items),
+        )
+        return ListCollectionResult(items=out, pages_seen=1, page_turns=0)
 
-    raw: list[tuple[str, str, str]] = []
-    for it in parse_list_page(start_html):
-        raw.append((it.title, it.link, it.date_raw))
-    for it in parse_notice_list_page(start_html):
-        raw.append((it.title, it.link, it.date_raw))
-    for it in parse_zcpt_list_page(start_html):
-        raw.append((it.title, it.link, it.date_raw))
+    start_html = http.get_text(target.list_url)
+    log.info("list.fetch", site=target.name, url=target.list_url)
 
-    seen_pages: set[str] = {cfg.list_url}
-    queue = parse_category_links(start_html, base_url=cfg.base_url)
-    log.debug("list.discover_categories", count=len(queue))
+    raw = _parse_page_items(start_html, current_url=target.list_url)
+
+    seen_pages: set[str] = {target.list_url}
+    queue = parse_category_links(start_html, base_url=target.base_url)
+    log.debug("list.discover_categories", site=target.name, count=len(queue))
 
     # Explore category pages (site nav tree). For each category page, follow pagination
     # until records are older than our lookback window.
@@ -103,20 +392,16 @@ def _collect_list_items(
             try:
                 html = http.get_text(page_url)
             except Exception:  # noqa: BLE001
-                log.warn("category.fetch_failed", url=page_url)
+                log.warn("category.fetch_failed", site=target.name, url=page_url)
                 break
 
-            log.debug("category.fetch", url=page_url, page=page_idx)
+            log.debug("category.fetch", site=target.name, url=page_url, page=page_idx)
 
-            for it in parse_list_page(html):
-                raw.append((it.title, it.link, it.date_raw))
+            parsed_items = _parse_page_items(html, current_url=page_url)
+            raw.extend(parsed_items)
 
             notices = parse_notice_list_page(html)
             zcpt_items = parse_zcpt_list_page(html)
-            for it in notices:
-                raw.append((it.title, it.link, it.date_raw))
-            for it in zcpt_items:
-                raw.append((it.title, it.link, it.date_raw))
 
             # Determine whether to stop paging based on lookback.
             # - legacy pages: assume sorted desc, stop when min_date < earliest_keep
@@ -128,6 +413,7 @@ def _collect_list_items(
                 if should_stop:
                     log.debug(
                         "category.stop_old",
+                        site=target.name,
                         url=page_url,
                         max_date=max_date,
                         earliest_keep=earliest_keep.isoformat(),
@@ -139,6 +425,7 @@ def _collect_list_items(
                     if min_d < earliest_keep:
                         log.debug(
                             "category.stop_old",
+                            site=target.name,
                             url=page_url,
                             min_date=min_d.isoformat(),
                             earliest_keep=earliest_keep.isoformat(),
@@ -153,7 +440,12 @@ def _collect_list_items(
 
             if not next_url or next_url in seen_pages:
                 break
-            log.debug("category.next_page", from_url=page_url, to_url=next_url)
+            log.debug(
+                "category.next_page",
+                site=target.name,
+                from_url=page_url,
+                to_url=next_url,
+            )
             seen_pages.add(next_url)
             page_url = next_url
             page_turns += 1
@@ -161,7 +453,7 @@ def _collect_list_items(
         # keep discovering deeper levels (only from the category root page)
         try:
             root_html = http.get_text(url)
-            for u in parse_category_links(root_html, base_url=cfg.base_url):
+            for u in parse_category_links(root_html, base_url=target.base_url):
                 if u not in seen_pages:
                     queue.append(u)
         except Exception:
@@ -179,7 +471,7 @@ def _collect_list_items(
 
     log.info(
         "list.collected",
-        site=("zcpt" if "zcpt.zgpmsm.com.cn" in cfg.list_url else "unknown"),
+        site=target.name,
         items=len(out),
         pages=len(seen_pages),
         page_turns=page_turns,
@@ -256,6 +548,7 @@ def run_once(cfg: Config) -> dict[str, object]:
     log.info(
         "run.start",
         list_url=cfg.list_url,
+        site_list_markdown_path=cfg.site_list_markdown_path,
         db_path=cfg.db_path,
         days_lookback=cfg.days_lookback,
         max_items=cfg.max_items_per_run,
@@ -280,7 +573,21 @@ def run_once(cfg: Config) -> dict[str, object]:
 
     db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
     db.init_schema()
-    run = db.start_run(run_id_override=cfg.run_id_override)
+    run = db.start_run(
+        run_id_override=cfg.run_id_override,
+        task_id=(os.environ.get("TASK_ID") or "").strip() or None,
+        task_name=(os.environ.get("TASK_NAME") or "").strip() or None,
+        scrape_target_names=[
+            x.strip()
+            for x in (os.environ.get("RUN_SCRAPE_TARGET_NAMES") or "").split("||")
+            if x.strip()
+        ],
+        feishu_target_names=[
+            x.strip()
+            for x in (os.environ.get("RUN_FEISHU_TARGET_NAMES") or "").split("||")
+            if x.strip()
+        ],
+    )
     target_key = cfg.notify_target_key
 
     feishu: FeishuClient | None = None
@@ -303,6 +610,7 @@ def run_once(cfg: Config) -> dict[str, object]:
                 api_key=cfg.ai_api_key,
                 base_url=cfg.ai_base_url,
                 model=cfg.ai_model,
+                fallback_model="llama-3.1-8b-instant",
                 temperature=cfg.ai_temperature,
                 timeout_ms=cfg.ai_timeout_ms,
                 retry_count=cfg.ai_retry_count,
@@ -324,8 +632,30 @@ def run_once(cfg: Config) -> dict[str, object]:
         earliest_keep = date.fromisoformat(recent.today) - timedelta(
             days=max(cfg.days_lookback - 1, 0)
         )
-        collected = _collect_list_items(cfg, http, log, earliest_keep=earliest_keep)
-        raw_items = collected.items
+        targets = _load_site_targets(cfg)
+        all_items: list[tuple[str, str, str, str]] = []
+        total_pages_seen = 0
+        total_page_turns = 0
+        target_errors: list[str] = []
+        for target in targets:
+            try:
+                collected = _collect_list_items_for_target(
+                    target, cfg, http, log, earliest_keep=earliest_keep
+                )
+            except Exception as e:  # noqa: BLE001
+                target_errors.append(f"site_failed: {target.name}: {e}")
+                log.warn(
+                    "site.failed", site=target.name, url=target.list_url, error=str(e)
+                )
+                continue
+            total_pages_seen += collected.pages_seen
+            total_page_turns += collected.page_turns
+            for title, link, date_raw in collected.items:
+                all_items.append((target.base_url, title, link, date_raw))
+
+        item_errors.extend(target_errors)
+
+        raw_items = all_items
         if not raw_items:
             log.warn("run.no_items")
             duration = int(round(time.time() - start))
@@ -354,15 +684,15 @@ def run_once(cfg: Config) -> dict[str, object]:
         keyword_re = re.compile(cfg.keyword_regex)
         now_dt = datetime.fromisoformat(recent.now_iso)
 
-        normalized: list[tuple[str, str, str]] = []
-        for title, link, date_raw in raw_items:
+        normalized: list[tuple[str, str, str, str]] = []
+        for base_url, title, link, date_raw in raw_items:
             d = normalize_date(date_raw, now=now_dt)
             if not d:
                 continue
-            normalized.append((title, link, d))
+            normalized.append((base_url, title, link, d))
 
         if cfg.use_test_fixtures and normalized:
-            base_d = max(d for _, _, d in normalized)
+            base_d = max(d for _, _, _, d in normalized)
             base_date = date.fromisoformat(base_d)
         else:
             base_date = date.fromisoformat(recent.today)
@@ -382,22 +712,22 @@ def run_once(cfg: Config) -> dict[str, object]:
             last=max(allowed_dates),
         )
 
-        filtered: list[tuple[str, str, str]] = []
-        for title, link, d in normalized:
+        filtered: list[tuple[str, str, str, str]] = []
+        for base_url, title, link, d in normalized:
             if d not in allowed_dates:
                 continue
             if not keyword_re.search(title):
                 continue
-            filtered.append((title, link, d))
+            filtered.append((base_url, title, link, d))
 
         log.info("filter.result", normalized=len(normalized), matched=len(filtered))
 
-        adaptive = collected.page_turns > cfg.adaptive_delay_threshold_pages
+        adaptive = total_page_turns > cfg.adaptive_delay_threshold_pages
         current_delay = max(cfg.loop_delay_seconds, 0.0)
         if adaptive:
             log.info(
                 "throttle.enabled",
-                page_turns=collected.page_turns,
+                page_turns=total_page_turns,
                 threshold=cfg.adaptive_delay_threshold_pages,
                 batch_size=cfg.batch_size,
                 delay_increment_seconds=cfg.delay_increment_seconds,
@@ -413,10 +743,12 @@ def run_once(cfg: Config) -> dict[str, object]:
             total_candidates=len(raw_items),
             total_normalized=len(normalized),
             total_matched=len(filtered),
+            total_sites=len(targets),
+            total_pages_seen=total_pages_seen,
             max_items=max_items,
         )
 
-        for idx, (title, link, d) in enumerate(filtered):
+        for idx, (base_url, title, link, d) in enumerate(filtered):
             if max_items and idx >= max_items:
                 break
             if idx > 0 and current_delay > 0:
@@ -425,7 +757,7 @@ def run_once(cfg: Config) -> dict[str, object]:
             abs_url = (
                 link
                 if link.startswith("http")
-                else urljoin(cfg.base_url.rstrip("/") + "/", link)
+                else urljoin(base_url.rstrip("/") + "/", link)
             )
             exists = db.is_duplicate(
                 target_key=target_key, title=title, url=abs_url, date=d

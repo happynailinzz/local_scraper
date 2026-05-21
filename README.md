@@ -5,6 +5,9 @@
 当前默认采集站点：
 - `https://zcpt.zgpmsm.com.cn/jyxx/sec_listjyxx.html`
 
+已验证可抓取的网站清单：
+- `docs/已验证网站清单.md`
+
 ## 功能
 
 - 采集交易信息/采购公告列表，自动翻页、多栏目并行发现
@@ -38,6 +41,19 @@ cp .env.example .env
 
 也可在 WebUI 启动后访问 `/settings/init` 通过页面配置。
 
+如需只跑当前项目已验证通过的网站，可直接使用：
+
+```bash
+source .venv/bin/activate
+AI_DISABLED=false python scripts/run.py \
+  --site-list-markdown "docs/已验证网站清单.md" \
+  --days-lookback 7 \
+  --keywords "采购,招标" \
+  --max-items 20 \
+  --loop-delay 1 \
+  --log-level info
+```
+
 > **飞书多群分发**：`FEISHU_WEBHOOK_URL` 作为兜底全局 Webhook。如需按群分发，在 WebUI `/settings/feishu` 新建群后，在任务中勾选推送目标即可，无需修改 `.env`。
 
 ### 3. 运行一次采集
@@ -60,10 +76,51 @@ AI_DISABLED=false python scripts/run.py \
 ```bash
 source .venv/bin/activate
 python scripts/webui.py
-# 访问 http://127.0.0.1:8000
+# 访问 http://127.0.0.1:${WEBUI_PORT:-8000}
 ```
 
 WebUI 包含任务调度器，**需要常驻运行**才能执行定时任务。
+
+### 5. 本地部署验证
+
+如果你想确认本地 WebUI 已真正可用，而不是只起了进程，可以按下面步骤做一次最小验证。
+
+1. 启动 WebUI
+
+```bash
+source .venv/bin/activate
+python scripts/webui.py
+```
+
+2. 打开浏览器访问：
+
+```text
+http://127.0.0.1:${WEBUI_PORT:-8000}
+```
+
+3. 使用 `.env` 中的 `WEBUI_USERNAME` / `WEBUI_PASSWORD` 登录
+
+4. 依次检查这些页面是否可打开：
+
+- `/`
+- `/tasks`
+- `/tasks/new`
+- `/settings/init`
+- `/settings/scrape-targets`
+- `/settings/feishu`
+
+5. 做一条完整链路验证：
+
+- 在 `抓取站点` 页面点击 `导入内置已验证网站清单`
+- 在 `任务` 页面新建任务
+- 点击 `全选已验证站点`
+- 保存后进入任务详情页，确认任务已创建且绑定站点正常显示
+
+说明：
+
+- 项目内置已验证网站清单位于 `docs/已验证网站清单.md`
+- 本地环境中如果 `.env` 设置了 `WEBUI_PORT=5682`，则实际访问地址为 `http://127.0.0.1:5682`
+- 当前仓库已经验证过“导入内置已验证站点 -> 创建任务 -> 打开详情页”这条链路可用
 
 ## WebUI 功能说明
 

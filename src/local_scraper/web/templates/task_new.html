@@ -2,68 +2,101 @@
 {% block body %}
 
 <div class="card">
-  <div class="h">新建任务</div>
-  <form method="post" action="/tasks/create" class="controls">
+  <div class="h">{{ page_title or '新建任务' }}</div>
+  <form method="post" action="{{ form_action or '/tasks/create' }}" class="controls">
     <div style="min-width:260px;">
       <label>任务名</label>
-      <input name="name" value="每日采购" />
+      <input name="name" value="{{ form_data.name }}" />
     </div>
     <div>
       <label>启用</label>
       <select name="enabled">
-        <option value="true" selected>是</option>
-        <option value="false">否</option>
+        <option value="true" {% if form_data.enabled == 'true' %}selected{% endif %}>是</option>
+        <option value="false" {% if form_data.enabled == 'false' %}selected{% endif %}>否</option>
       </select>
     </div>
     <div>
       <label>计划类型</label>
       <select name="schedule_type" id="schedule_type">
-        <option value="cron" selected>cron</option>
-        <option value="interval">interval</option>
+        <option value="cron" {% if form_data.schedule_type == 'cron' %}selected{% endif %}>cron</option>
+        <option value="interval" {% if form_data.schedule_type == 'interval' %}selected{% endif %}>interval</option>
       </select>
     </div>
     <div style="min-width:260px;">
       <label>cron 表达式(5段)</label>
-      <input name="cron_expr" value="0 8,12,16,20 * * *" />
+      <input name="cron_expr" value="{{ form_data.cron_expr }}" />
       <div class="muted">例：0 8,12,16,20 * * * 表示每天 8/12/16/20 点</div>
     </div>
     <div>
       <label>interval 秒</label>
-      <input name="interval_seconds" value="3600" />
+      <input name="interval_seconds" value="{{ form_data.interval_seconds }}" />
       <div class="muted">仅 schedule_type=interval 时生效</div>
     </div>
 
     <div style="min-width:260px;">
       <label>关键词(逗号分隔)</label>
-      <input name="keywords" value="采购" />
+      <input name="keywords" value="{{ form_data.keywords }}" />
     </div>
     <div>
       <label>回溯天数</label>
-      <input name="days_lookback" value="7" />
+      <input name="days_lookback" value="{{ form_data.days_lookback }}" />
     </div>
     <div>
       <label>去重策略</label>
       <select name="dedupe_strategy">
-        <option value="title" selected>title</option>
-        <option value="url">url</option>
-        <option value="title_date">title_date</option>
+        <option value="title" {% if form_data.dedupe_strategy == 'title' %}selected{% endif %}>title</option>
+        <option value="url" {% if form_data.dedupe_strategy == 'url' %}selected{% endif %}>url</option>
+        <option value="title_date" {% if form_data.dedupe_strategy == 'title_date' %}selected{% endif %}>title_date</option>
       </select>
     </div>
     <div>
       <label>飞书推送</label>
       <select name="send_feishu">
-        <option value="true" selected>开启</option>
-        <option value="false">关闭</option>
+        <option value="true" {% if form_data.send_feishu == 'true' %}selected{% endif %}>开启</option>
+        <option value="false" {% if form_data.send_feishu == 'false' %}selected{% endif %}>关闭</option>
       </select>
     </div>
     <div>
       <label>飞书通知模式</label>
       <select name="feishu_notify_mode">
-        <option value="digest" selected>汇总</option>
-        <option value="per_item">逐条</option>
+        <option value="digest" {% if form_data.feishu_notify_mode == 'digest' %}selected{% endif %}>汇总</option>
+        <option value="per_item" {% if form_data.feishu_notify_mode == 'per_item' %}selected{% endif %}>逐条</option>
       </select>
       <div class="muted">汇总：单次运行仅发一张卡片；逐条：每条新增都发</div>
     </div>
+
+    {% if scrape_targets %}
+    <div style="width:100%;">
+      <label>抓取站点（可多选，留空则使用全局 LIST_URL）</label>
+      {% if builtin_selected_ids %}
+      <div class="muted" style="margin-top:4px;">
+        快捷操作：
+        <button type="button" onclick='document.querySelectorAll("input[name=" + "\"scrape_target_ids\"" + "]").forEach(el => { if (!el.disabled && {{ builtin_selected_ids_json|safe }}.includes(el.value)) el.checked = true; });'>全选已验证站点</button>
+        <button type="button" onclick='document.querySelectorAll("input[name=" + "\"scrape_target_ids\"" + "]").forEach(el => { if ({{ builtin_selected_ids_json|safe }}.includes(el.value)) el.checked = false; });'>清空已验证站点</button>
+      </div>
+      {% endif %}
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;">
+        {% for t in scrape_targets %}
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text);font-size:14px;">
+          <input type="checkbox" name="scrape_target_ids" value="{{ t.target_id }}"
+            style="width:16px;height:16px;border-radius:4px;cursor:pointer;"
+            {% if t.target_id in selected_scrape_ids %}checked{% endif %}
+            {% if not t.enabled %}disabled title="该站点已停用"{% endif %} />
+          <span>{{ t.name }}</span>
+          {% if t.keyword_regex %}
+          <span class="pill" style="font-size:11px;">{{ t.keyword_regex }}</span>
+          {% endif %}
+          {% if not t.enabled %}<span class="muted" style="font-size:11px;">(停用)</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+      <div class="muted" style="margin-top:4px;">勾选后任务按所选站点逐个抓取；未勾选则使用全局 LIST_URL。<a href="/settings/scrape-targets" style="color:var(--accent);">管理抓取站点</a></div>
+    </div>
+    {% else %}
+    <div style="width:100%;" class="muted">
+      尚未配置抓取站点，<a href="/settings/scrape-targets" style="color:var(--accent);">点此新建</a>后可在任务中选择抓取目标。
+    </div>
+    {% endif %}
 
     {% if all_targets %}
     <div style="width:100%;">
@@ -73,6 +106,7 @@
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text);font-size:14px;">
           <input type="checkbox" name="feishu_target_ids" value="{{ t.target_id }}"
             style="width:16px;height:16px;border-radius:4px;cursor:pointer;"
+            {% if t.target_id in selected_ids %}checked{% endif %}
             {% if not t.enabled %}disabled title="该群已停用"{% endif %} />
           <span>{{ t.name }}</span>
           {% if t.keyword_regex %}
@@ -92,41 +126,41 @@
 
     <div>
       <label>MAX_ITEMS</label>
-      <input name="max_items" value="0" />
+      <input name="max_items" value="{{ form_data.max_items }}" />
     </div>
     <div>
       <label>LOOP_DELAY</label>
-      <input name="loop_delay" value="1" />
+      <input name="loop_delay" value="{{ form_data.loop_delay }}" />
     </div>
 
     <div>
       <label>MAX_PAGES_TOTAL</label>
-      <input name="max_pages_total" value="80" />
+      <input name="max_pages_total" value="{{ form_data.max_pages_total }}" />
     </div>
     <div>
       <label>MAX_PAGES_PER_CATEGORY</label>
-      <input name="max_pages_per_category" value="50" />
+      <input name="max_pages_per_category" value="{{ form_data.max_pages_per_category }}" />
     </div>
 
     <div>
       <label>节流阈值(翻页数)</label>
-      <input name="adaptive_threshold_pages" value="10" />
+      <input name="adaptive_threshold_pages" value="{{ form_data.adaptive_threshold_pages }}" />
     </div>
     <div>
       <label>节流批大小</label>
-      <input name="batch_size" value="50" />
+      <input name="batch_size" value="{{ form_data.batch_size }}" />
     </div>
     <div>
       <label>每批加延迟(秒)</label>
-      <input name="delay_increment_seconds" value="1" />
+      <input name="delay_increment_seconds" value="{{ form_data.delay_increment_seconds }}" />
     </div>
     <div>
       <label>最大延迟(秒)</label>
-      <input name="max_loop_delay_seconds" value="10" />
+      <input name="max_loop_delay_seconds" value="{{ form_data.max_loop_delay_seconds }}" />
     </div>
 
     <div>
-      <button type="submit">创建</button>
+      <button type="submit">{{ submit_label or '创建' }}</button>
     </div>
   </form>
 </div>

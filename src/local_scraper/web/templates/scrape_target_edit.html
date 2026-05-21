@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block body %}
+
+<div class="card">
+  <div class="h">编辑抓取站点</div>
+  <div class="muted">修改后，新的任务运行会使用更新后的站点配置。</div>
+  {% if saved %}
+  <div class="pill" style="margin-top:10px;">保存成功</div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <form method="post" action="/settings/scrape-targets/{{ target.target_id }}/edit" class="controls">
+    <div style="min-width:220px;flex:1;">
+      <label>站点名称</label>
+      <input style="width:100%;" name="name" value="{{ target.name }}" />
+    </div>
+    <div style="min-width:360px;flex:2;">
+      <label>LIST_URL</label>
+      <input style="width:100%;" name="list_url" value="{{ target.list_url }}" />
+    </div>
+    <div style="min-width:320px;flex:1;">
+      <label>BASE_URL</label>
+      <input style="width:100%;" name="base_url" value="{{ target.base_url }}" />
+    </div>
+    <div style="min-width:260px;flex:1;">
+      <label>站点关键词覆盖</label>
+      <input style="width:100%;" name="keyword_regex" value="{{ target.keyword_regex }}" />
+    </div>
+    <div>
+      <label>回溯天数</label>
+      <input name="days_lookback" value="{{ target.days_lookback or '' }}" />
+    </div>
+    <div>
+      <label>MAX_PAGES_TOTAL</label>
+      <input name="max_pages_total" value="{{ target.max_pages_total or '' }}" />
+    </div>
+    <div>
+      <label>MAX_PAGES_PER_CATEGORY</label>
+      <input name="max_pages_per_category" value="{{ target.max_pages_per_category or '' }}" />
+    </div>
+    <div>
+      <label>启用</label>
+      <select name="enabled">
+        <option value="true" {% if target.enabled %}selected{% endif %}>是</option>
+        <option value="false" {% if not target.enabled %}selected{% endif %}>否</option>
+      </select>
+    </div>
+    <div>
+      <button type="submit">保存</button>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

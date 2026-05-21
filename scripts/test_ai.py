@@ -51,6 +51,7 @@ def main() -> int:
             api_key=api_key,
             base_url=os.environ.get("AI_BASE_URL", "https://api.yuweixun.site/v1"),
             model=os.environ.get("AI_MODEL", "llama-3.3-70b-versatile"),
+            fallback_model="llama-3.1-8b-instant",
             temperature=float(os.environ.get("AI_TEMPERATURE", "0.5")),
             timeout_ms=int(os.environ.get("AI_TIMEOUT_MS", "60000")),
             retry_count=int(os.environ.get("AI_RETRY_COUNT", "2")),

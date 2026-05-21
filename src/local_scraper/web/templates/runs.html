@@ -65,6 +65,38 @@
         <option value="per_item">逐条</option>
       </select>
     </div>
+    {% if scrape_targets %}
+    <div style="width:100%;">
+      <label>抓取站点（可多选，留空则使用全局 LIST_URL）</label>
+      {% if builtin_selected_ids %}
+      <div class="muted" style="margin-top:4px;">
+        快捷操作：
+        <button type="button" onclick='document.querySelectorAll("input[name=" + "\"scrape_target_ids\"" + "]").forEach(el => { if (!el.disabled && {{ builtin_selected_ids_json|safe }}.includes(el.value)) el.checked = true; });'>全选已验证站点</button>
+        <button type="button" onclick='document.querySelectorAll("input[name=" + "\"scrape_target_ids\"" + "]").forEach(el => { if ({{ builtin_selected_ids_json|safe }}.includes(el.value)) el.checked = false; });'>清空已验证站点</button>
+      </div>
+      {% endif %}
+      <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:4px;">
+        {% for t in scrape_targets %}
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text);font-size:14px;">
+          <input type="checkbox" name="scrape_target_ids" value="{{ t.target_id }}"
+            style="width:16px;height:16px;border-radius:4px;cursor:pointer;"
+            {% if t.target_id in selected_scrape_ids %}checked{% endif %}
+            {% if not t.enabled %}disabled title="该站点已停用"{% endif %} />
+          <span>{{ t.name }}</span>
+          {% if t.keyword_regex %}
+          <span class="pill" style="font-size:11px;">{{ t.keyword_regex }}</span>
+          {% endif %}
+          {% if not t.enabled %}<span class="muted" style="font-size:11px;">(停用)</span>{% endif %}
+        </label>
+        {% endfor %}
+      </div>
+      <div class="muted" style="margin-top:4px;">勾选后本次运行按所选站点逐个抓取；未勾选则使用全局 LIST_URL。<a href="/settings/scrape-targets" style="color:var(--accent);">管理抓取站点</a></div>
+    </div>
+    {% else %}
+    <div style="width:100%;" class="muted">
+      尚未配置抓取站点，<a href="/settings/scrape-targets" style="color:var(--accent);">点此新建</a>后可在单次运行中选择抓取目标。
+    </div>
+    {% endif %}
     <div>
       <button type="submit">启动一次采集</button>
     </div>
@@ -77,6 +109,7 @@
     <thead>
       <tr>
         <th>run_id</th>
+        <th>关联</th>
         <th>started_at</th>
         <th>duration</th>
         <th>processed</th>
@@ -89,6 +122,19 @@
       {% for r in rows %}
       <tr>
         <td><a href="/runs/{{ r.run_id }}">{{ r.run_id[:8] }}</a></td>
+        <td class="muted">
+          <div>任务: {{ r.task_name or '-' }}</div>
+          {% if r.scrape_target_names %}
+          <div style="font-size:12px;">站点: {{ r.scrape_target_names[:3] | join('、') }}{% if r.scrape_target_names|length > 3 %} 等 {{ r.scrape_target_names|length }} 个{% endif %}</div>
+          {% else %}
+          <div style="font-size:12px;">站点: 使用全局 LIST_URL</div>
+          {% endif %}
+          {% if r.feishu_target_names %}
+          <div style="font-size:12px;">飞书: {{ r.feishu_target_names[:3] | join('、') }}{% if r.feishu_target_names|length > 3 %} 等 {{ r.feishu_target_names|length }} 个{% endif %}</div>
+          {% else %}
+          <div style="font-size:12px;">飞书: 使用全局 Webhook</div>
+          {% endif %}
+        </td>
         <td class="muted">{{ r.started_at }}</td>
         <td class="muted">{{ r.duration_seconds or "-" }}</td>
         <td>{{ r.total_processed }}</td>

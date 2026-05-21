@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 import secrets
@@ -23,6 +24,7 @@ from dotenv import dotenv_values, set_key
 
 from ..config import Config
 from ..db import Database
+from ..parser import parse_site_list_markdown
 from .task_scheduler import TaskScheduler
 
 
@@ -32,9 +34,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _ENV_FILE = _PROJECT_ROOT / ".env"
 _MODEL_PRESETS = [
     "llama-3.3-70b-versatile",
-    "gpt-4o-mini",
-    "gpt-4.1-mini",
-    "deepseek-chat",
+    "llama-3.1-8b-instant",
     "custom",
 ]
 
@@ -321,7 +321,7 @@ def init_settings(
         cfg.ai_base_url if cfg else "https://api.yuweixun.site/v1"
     )
     ai_model = env_cfg.get("AI_MODEL") or (
-        cfg.ai_model if cfg else "llama-3.3-70b-versatile"
+        cfg.ai_model if cfg else "llama-3.1-8b-instant"
     )
     ai_api_key = env_cfg.get("AI_API_KEY") or (cfg.ai_api_key if cfg else "")
     ai_disabled = (
@@ -334,8 +334,9 @@ def init_settings(
     custom_model = "" if preset != "custom" else ai_model
 
     return _TEMPLATES.TemplateResponse(
-        "init_settings.html",
-        {
+        request=request,
+        name="init_settings.html",
+        context={
             "request": request,
             "saved": saved == 1,
             "list_url": list_url,
@@ -362,7 +363,7 @@ def init_settings_save(
     feishu_webhook_url: str = Form(""),
     feishu_notify_mode: str = Form("digest"),
     ai_base_url: str = Form("https://api.yuweixun.site/v1"),
-    ai_model_preset: str = Form("llama-3.3-70b-versatile"),
+    ai_model_preset: str = Form("llama-3.1-8b-instant"),
     ai_model_custom: str = Form(""),
     ai_api_key: str = Form(""),
     ai_disabled: str = Form("false"),
@@ -455,8 +456,9 @@ def announcements(
     db.close()
 
     return _TEMPLATES.TemplateResponse(
-        "announcements.html",
-        {
+        request=request,
+        name="announcements.html",
+        context={
             "request": request,
             "rows": rows,
             "total": total,
@@ -484,8 +486,9 @@ def announcement_detail(
     if not row:
         raise HTTPException(status_code=404)
     return _TEMPLATES.TemplateResponse(
-        "announcement_detail.html",
-        {"request": request, "row": row},
+        request=request,
+        name="announcement_detail.html",
+        context={"request": request, "row": row},
     )
 
 
@@ -503,16 +506,28 @@ def runs(
 
     db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
     total, rows = db.list_runs(limit=page_size, offset=offset)
+    scrape_targets = db.list_scrape_targets()
     db.close()
+    builtin_names = {row["name"] for row in _load_builtin_verified_sites()}
+    builtin_selected_ids = {
+        str(t["target_id"])
+        for t in scrape_targets
+        if str(t["name"]) in builtin_names and bool(t.get("enabled"))
+    }
 
     return _TEMPLATES.TemplateResponse(
-        "runs.html",
-        {
+        request=request,
+        name="runs.html",
+        context={
             "request": request,
             "rows": rows,
             "total": total,
             "page": page,
             "page_size": page_size,
+            "scrape_targets": scrape_targets,
+            "selected_scrape_ids": set(),
+            "builtin_selected_ids": builtin_selected_ids,
+            "builtin_selected_ids_json": json.dumps(sorted(builtin_selected_ids)),
         },
     )
 
@@ -522,22 +537,31 @@ def tasks(request: Request, _: Any = Depends(_basic_auth)) -> HTMLResponse:
     cfg = Config.from_env()
     db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
     rows = db.list_tasks()
-    db.close()
 
     runtime_map = _TASKS.list_runtime()
     merged = []
     for t in rows:
         tid = str(t["task_id"])
+        feishu_target_ids = db.get_task_target_ids(tid)
+        scrape_target_ids = db.get_task_scrape_target_ids(tid)
+        feishu_target_names = [tgt["name"] for tgt in db.get_task_targets(tid)]
+        scrape_target_names = [tgt["name"] for tgt in db.get_task_scrape_targets(tid)]
         merged.append(
             {
                 **t,
                 "runtime": runtime_map.get(tid),
                 "next_run_time": _TASKS.get_next_run_time(tid),
+                "feishu_target_count": len(feishu_target_ids),
+                "scrape_target_count": len(scrape_target_ids),
+                "feishu_target_names": feishu_target_names,
+                "scrape_target_names": scrape_target_names,
             }
         )
+    db.close()
     return _TEMPLATES.TemplateResponse(
-        "tasks.html",
-        {"request": request, "tasks": merged},
+        request=request,
+        name="tasks.html",
+        context={"request": request, "tasks": merged},
     )
 
 
@@ -546,9 +570,30 @@ def task_new(request: Request, _: Any = Depends(_basic_auth)) -> HTMLResponse:
     cfg = Config.from_env()
     db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
     all_targets = db.list_feishu_targets()
+    scrape_targets = db.list_scrape_targets()
     db.close()
+    builtin_names = {row["name"] for row in _load_builtin_verified_sites()}
+    builtin_selected_ids = {
+        str(t["target_id"])
+        for t in scrape_targets
+        if str(t["name"]) in builtin_names and bool(t.get("enabled"))
+    }
     return _TEMPLATES.TemplateResponse(
-        "task_new.html", {"request": request, "all_targets": all_targets}
+        request=request,
+        name="task_new.html",
+        context={
+            "request": request,
+            "all_targets": all_targets,
+            "scrape_targets": scrape_targets,
+            "form_data": _task_form_defaults(),
+            "selected_ids": set(),
+            "selected_scrape_ids": set(),
+            "builtin_selected_ids": builtin_selected_ids,
+            "builtin_selected_ids_json": json.dumps(sorted(builtin_selected_ids)),
+            "form_action": "/tasks/create",
+            "page_title": "新建任务",
+            "submit_label": "创建",
+        },
     )
 
 
@@ -556,15 +601,134 @@ def _truthy(v: str) -> bool:
     return v.strip().lower() in {"1", "true", "yes", "on"}
 
 
-@app.post("/tasks/create")
-async def task_create(
-    request: Request,
-    _: Any = Depends(_basic_auth),
-) -> RedirectResponse:
-    import uuid
-    from apscheduler.triggers.cron import CronTrigger
+def _parse_optional_int(raw: str) -> int | None:
+    value = raw.strip()
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"invalid integer: {raw}") from e
 
-    form = await request.form()
+
+def _parse_bulk_scrape_targets(raw: str) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for index, line in enumerate(raw.splitlines(), start=1):
+        text = line.strip()
+        if not text:
+            continue
+        if text.startswith("#"):
+            continue
+        parts = [p.strip() for p in re.split(r"\t|\|", text)]
+        if len(parts) < 3:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"第 {index} 行格式错误，至少需要 名称、LIST_URL、BASE_URL，"
+                    "可使用制表符或 | 分隔"
+                ),
+            )
+        rows.append(
+            {
+                "name": parts[0],
+                "list_url": parts[1],
+                "base_url": parts[2],
+                "keyword_regex": parts[3] if len(parts) >= 4 else "",
+                "days_lookback": _parse_optional_int(parts[4])
+                if len(parts) >= 5
+                else None,
+                "max_pages_total": _parse_optional_int(parts[5])
+                if len(parts) >= 6
+                else None,
+                "max_pages_per_category": _parse_optional_int(parts[6])
+                if len(parts) >= 7
+                else None,
+            }
+        )
+    return rows
+
+
+def _builtin_verified_sites_path() -> Path:
+    return Path(__file__).resolve().parents[3] / "docs" / "已验证网站清单.md"
+
+
+def _load_builtin_verified_sites() -> list[dict[str, object]]:
+    path = _builtin_verified_sites_path()
+    text = path.read_text(encoding="utf-8")
+    rows = []
+    for entry in parse_site_list_markdown(text):
+        rows.append(
+            {
+                "name": entry.name,
+                "list_url": entry.url,
+                "base_url": _normalize_base_url(entry.url, entry.url),
+                "keyword_regex": "",
+                "days_lookback": None,
+                "max_pages_total": None,
+                "max_pages_per_category": None,
+            }
+        )
+    return rows
+
+
+def _config_to_task_form(task: dict[str, object], cfg: Config) -> dict[str, object]:
+    config = task.get("config") if isinstance(task.get("config"), dict) else {}
+    keyword_label = str(config.get("KEYWORDS_LABEL") or "").strip()
+    return {
+        "name": task.get("name") or "",
+        "enabled": "true" if task.get("enabled") else "false",
+        "schedule_type": task.get("schedule_type") or "cron",
+        "cron_expr": task.get("cron_expr") or "0 8,12,16,20 * * *",
+        "interval_seconds": task.get("interval_seconds") or 3600,
+        "keywords": keyword_label,
+        "days_lookback": config.get("DAYS_LOOKBACK", cfg.days_lookback),
+        "dedupe_strategy": config.get("DEDUPE_STRATEGY", cfg.dedupe_strategy),
+        "send_feishu": "false" if config.get("FEISHU_WEBHOOK_URL") == "" else "true",
+        "feishu_notify_mode": config.get("FEISHU_NOTIFY_MODE", cfg.feishu_notify_mode),
+        "max_items": config.get("MAX_ITEMS_PER_RUN", cfg.max_items_per_run),
+        "loop_delay": config.get("LOOP_DELAY", cfg.loop_delay_seconds),
+        "max_pages_total": config.get("MAX_PAGES_TOTAL", cfg.max_pages_total),
+        "max_pages_per_category": config.get(
+            "MAX_PAGES_PER_CATEGORY", cfg.max_pages_per_category
+        ),
+        "adaptive_threshold_pages": config.get(
+            "ADAPTIVE_DELAY_THRESHOLD_PAGES", cfg.adaptive_delay_threshold_pages
+        ),
+        "batch_size": config.get("BATCH_SIZE", cfg.batch_size),
+        "delay_increment_seconds": config.get(
+            "DELAY_INCREMENT_SECONDS", cfg.delay_increment_seconds
+        ),
+        "max_loop_delay_seconds": config.get(
+            "MAX_LOOP_DELAY_SECONDS", cfg.max_loop_delay_seconds
+        ),
+    }
+
+
+def _task_form_defaults() -> dict[str, object]:
+    return {
+        "name": "每日采购",
+        "enabled": "true",
+        "schedule_type": "cron",
+        "cron_expr": "0 8,12,16,20 * * *",
+        "interval_seconds": 3600,
+        "keywords": "采购",
+        "days_lookback": 7,
+        "dedupe_strategy": "title",
+        "send_feishu": "true",
+        "feishu_notify_mode": "digest",
+        "max_items": 0,
+        "loop_delay": 1,
+        "max_pages_total": 80,
+        "max_pages_per_category": 50,
+        "adaptive_threshold_pages": 10,
+        "batch_size": 50,
+        "delay_increment_seconds": 1,
+        "max_loop_delay_seconds": 10,
+    }
+
+
+def _build_task_payload(form: Any, cfg: Config) -> dict[str, object]:
+    from apscheduler.triggers.cron import CronTrigger
 
     def _f(key: str, default: str = "") -> str:
         v = form.get(key)
@@ -600,11 +764,9 @@ async def task_create(
     batch_size = _fi("batch_size", 50)
     delay_increment_seconds = _ff("delay_increment_seconds", 1.0)
     max_loop_delay_seconds = _ff("max_loop_delay_seconds", 10.0)
-    # Multi-value: feishu_target_ids (checkboxes)
-    selected_target_ids = form.getlist("feishu_target_ids")
 
-    cfg = Config.from_env()
-    task_id = str(uuid.uuid4())
+    selected_target_ids = [str(t) for t in form.getlist("feishu_target_ids")]
+    selected_scrape_target_ids = [str(t) for t in form.getlist("scrape_target_ids")]
 
     parts = [k.strip() for k in keywords.split(",") if k.strip()]
     keyword_regex = (
@@ -657,18 +819,43 @@ async def task_create(
             )
         interval = interval_seconds
 
+    return {
+        "name": name,
+        "enabled": _truthy(enabled),
+        "schedule_type": st,
+        "cron_expr": cron,
+        "interval_seconds": interval,
+        "config": config,
+        "selected_target_ids": selected_target_ids,
+        "selected_scrape_target_ids": selected_scrape_target_ids,
+    }
+
+
+@app.post("/tasks/create")
+async def task_create(
+    request: Request,
+    _: Any = Depends(_basic_auth),
+) -> RedirectResponse:
+    import uuid
+
+    form = await request.form()
+
+    cfg = Config.from_env()
+    task_id = str(uuid.uuid4())
+    payload = _build_task_payload(form, cfg)
+
     db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
     db.upsert_task(
         task_id=task_id,
-        name=name or task_id,
-        enabled=_truthy(enabled),
-        schedule_type=st,
-        cron_expr=cron,
-        interval_seconds=interval,
-        config=config,
+        name=str(payload["name"] or task_id),
+        enabled=bool(payload["enabled"]),
+        schedule_type=str(payload["schedule_type"]),
+        cron_expr=payload["cron_expr"],
+        interval_seconds=payload["interval_seconds"],
+        config=payload["config"],
     )
-    if selected_target_ids:
-        db.set_task_targets(task_id, [str(t) for t in selected_target_ids])
+    db.set_task_targets(task_id, list(payload["selected_target_ids"]))
+    db.set_task_scrape_targets(task_id, list(payload["selected_scrape_target_ids"]))
     db.close()
 
     _TASKS.sync_from_db()
@@ -684,20 +871,95 @@ def task_detail(
     task = db.get_task(task_id)
     all_targets = db.list_feishu_targets()
     selected_ids = set(db.get_task_target_ids(task_id))
+    all_scrape_targets = db.list_scrape_targets()
+    selected_scrape_ids = set(db.get_task_scrape_target_ids(task_id))
     db.close()
     if not task:
         raise HTTPException(status_code=404)
     runtime = _TASKS.get_runtime(task_id)
     return _TEMPLATES.TemplateResponse(
-        "task_detail.html",
-        {
+        request=request,
+        name="task_detail.html",
+        context={
             "request": request,
             "task": task,
             "runtime": runtime,
             "all_targets": all_targets,
             "selected_ids": selected_ids,
+            "all_scrape_targets": all_scrape_targets,
+            "selected_scrape_ids": selected_scrape_ids,
         },
     )
+
+
+@app.get("/tasks/{task_id}/edit", response_class=HTMLResponse)
+def task_edit(
+    request: Request, task_id: str, _: Any = Depends(_basic_auth)
+) -> HTMLResponse:
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    task = db.get_task(task_id)
+    all_targets = db.list_feishu_targets()
+    scrape_targets = db.list_scrape_targets()
+    selected_ids = set(db.get_task_target_ids(task_id))
+    selected_scrape_ids = set(db.get_task_scrape_target_ids(task_id))
+    db.close()
+    if not task:
+        raise HTTPException(status_code=404)
+    builtin_names = {row["name"] for row in _load_builtin_verified_sites()}
+    builtin_selected_ids = {
+        str(t["target_id"])
+        for t in scrape_targets
+        if str(t["name"]) in builtin_names and bool(t.get("enabled"))
+    }
+    return _TEMPLATES.TemplateResponse(
+        request=request,
+        name="task_edit.html",
+        context={
+            "request": request,
+            "task": task,
+            "all_targets": all_targets,
+            "scrape_targets": scrape_targets,
+            "selected_ids": selected_ids,
+            "selected_scrape_ids": selected_scrape_ids,
+            "builtin_selected_ids": builtin_selected_ids,
+            "builtin_selected_ids_json": json.dumps(sorted(builtin_selected_ids)),
+            "form_data": _config_to_task_form(task, cfg),
+            "form_action": f"/tasks/{task_id}/edit",
+            "page_title": "编辑任务",
+            "submit_label": "保存",
+        },
+    )
+
+
+@app.post("/tasks/{task_id}/edit")
+async def task_edit_save(
+    request: Request, task_id: str, _: Any = Depends(_basic_auth)
+) -> RedirectResponse:
+    cfg = Config.from_env()
+    form = await request.form()
+    payload = _build_task_payload(form, cfg)
+
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    task = db.get_task(task_id)
+    if not task:
+        db.close()
+        raise HTTPException(status_code=404)
+    db.upsert_task(
+        task_id=task_id,
+        name=str(payload["name"] or task_id),
+        enabled=bool(payload["enabled"]),
+        schedule_type=str(payload["schedule_type"]),
+        cron_expr=payload["cron_expr"],
+        interval_seconds=payload["interval_seconds"],
+        config=payload["config"],
+    )
+    db.set_task_targets(task_id, list(payload["selected_target_ids"]))
+    db.set_task_scrape_targets(task_id, list(payload["selected_scrape_target_ids"]))
+    db.close()
+
+    _TASKS.sync_from_db()
+    return RedirectResponse(f"/tasks/{task_id}", status_code=303)
 
 
 @app.post("/tasks/{task_id}/toggle")
@@ -736,6 +998,37 @@ def task_delete(task_id: str, _: Any = Depends(_basic_auth)) -> RedirectResponse
     return RedirectResponse("/tasks", status_code=303)
 
 
+@app.post("/tasks/{task_id}/copy")
+def task_copy(task_id: str, _: Any = Depends(_basic_auth)) -> RedirectResponse:
+    import uuid
+
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    task = db.get_task(task_id)
+    if not task:
+        db.close()
+        raise HTTPException(status_code=404)
+
+    new_task_id = str(uuid.uuid4())
+    source_name = str(task.get("name") or task_id).strip()
+    new_name = f"{source_name} 副本"
+    db.upsert_task(
+        task_id=new_task_id,
+        name=new_name,
+        enabled=bool(task.get("enabled")),
+        schedule_type=str(task.get("schedule_type") or "cron"),
+        cron_expr=task.get("cron_expr"),
+        interval_seconds=task.get("interval_seconds"),
+        config=dict(task.get("config") or {}),
+    )
+    db.set_task_targets(new_task_id, db.get_task_target_ids(task_id))
+    db.set_task_scrape_targets(new_task_id, db.get_task_scrape_target_ids(task_id))
+    db.close()
+
+    _TASKS.sync_from_db()
+    return RedirectResponse(f"/tasks/{new_task_id}", status_code=303)
+
+
 @app.get("/tasks/{task_id}/stream")
 def stream_task(task_id: str, _: Any = Depends(_basic_auth)) -> StreamingResponse:
     def gen():
@@ -769,8 +1062,9 @@ def run_detail(
     live = _RUNS.get(run_id)
     log_file = _RUNS.get_log_file(run_id)
     return _TEMPLATES.TemplateResponse(
-        "run_detail.html",
-        {
+        request=request,
+        name="run_detail.html",
+        context={
             "request": request,
             "row": row,
             "run_id": run_id,
@@ -795,6 +1089,7 @@ def start_run(
     batch_size: int = Form(50),
     delay_increment_seconds: float = Form(1.0),
     max_loop_delay_seconds: float = Form(10.0),
+    scrape_target_ids: list[str] = Form(default=[]),
     _: Any = Depends(_basic_auth),
 ) -> RedirectResponse:
     overrides: dict[str, str] = {
@@ -823,6 +1118,38 @@ def start_run(
                 "(" + "|".join(re.escape(p) for p in parts) + ")"
             )
             overrides["KEYWORDS_LABEL"] = ",".join(parts)
+
+    overrides["TASK_NAME"] = "WebUI 单次运行"
+
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    selected_scrape_targets = [
+        t for t in db.list_scrape_targets() if str(t.get("target_id")) in set(scrape_target_ids)
+    ]
+    db.close()
+    if selected_scrape_targets:
+        overrides["RUN_SCRAPE_TARGET_NAMES"] = "||".join(
+            str(t.get("name") or "") for t in selected_scrape_targets
+        )
+        overrides["RUN_SCRAPE_TARGETS_JSON"] = json.dumps(
+            [
+                {
+                    "name": str(t.get("name") or ""),
+                    "list_url": str(t.get("list_url") or ""),
+                    "base_url": str(t.get("base_url") or ""),
+                    "keyword_regex": str(t.get("keyword_regex") or ""),
+                    "days_lookback": t.get("days_lookback"),
+                    "max_pages_total": t.get("max_pages_total"),
+                    "max_pages_per_category": t.get("max_pages_per_category"),
+                }
+                for t in selected_scrape_targets
+            ],
+            ensure_ascii=False,
+        )
+    else:
+        overrides["RUN_SCRAPE_TARGET_NAMES"] = (
+            os.environ.get("LIST_URL", "https://zcpt.zgpmsm.com.cn/jyxx/sec_listjyxx.html")
+        )
 
     run_id = _RUNS.start(overrides)
     return RedirectResponse(f"/runs/{run_id}", status_code=303)
@@ -867,6 +1194,232 @@ def stream_run(run_id: str, _: Any = Depends(_basic_auth)) -> StreamingResponse:
 
 
 # ------------------------------------------------------------------ #
+# Scrape targets management                                            #
+# ------------------------------------------------------------------ #
+
+
+@app.get("/settings/scrape-targets", response_class=HTMLResponse)
+def scrape_targets_page(
+    request: Request,
+    saved: int = 0,
+    imported: int = 0,
+    builtin_imported: int = 0,
+    _: Any = Depends(_basic_auth),
+) -> HTMLResponse:
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    targets = db.list_scrape_targets()
+    db.close()
+    return _TEMPLATES.TemplateResponse(
+        request=request,
+        name="scrape_targets.html",
+        context={
+            "request": request,
+            "targets": targets,
+            "saved": saved == 1,
+            "imported": imported,
+            "builtin_imported": builtin_imported,
+        },
+    )
+
+
+@app.post("/settings/scrape-targets")
+async def scrape_target_create(
+    request: Request,
+    _: Any = Depends(_basic_auth),
+) -> RedirectResponse:
+    form = await request.form()
+    name = str(form.get("name", "")).strip()
+    list_url = str(form.get("list_url", "")).strip()
+    base_url = str(form.get("base_url", "")).strip()
+    keyword_regex = str(form.get("keyword_regex", "")).strip()
+    days_lookback = _parse_optional_int(str(form.get("days_lookback", "")))
+    max_pages_total = _parse_optional_int(str(form.get("max_pages_total", "")))
+    max_pages_per_category = _parse_optional_int(
+        str(form.get("max_pages_per_category", ""))
+    )
+    enabled = _truthy(str(form.get("enabled", "true")))
+
+    if not name:
+        raise HTTPException(status_code=400, detail="站点名称不能为空")
+    if not list_url:
+        raise HTTPException(status_code=400, detail="LIST_URL 不能为空")
+
+    base_url = base_url or _normalize_base_url(list_url, list_url)
+
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    db.create_scrape_target(
+        name=name,
+        list_url=list_url,
+        base_url=base_url,
+        keyword_regex=keyword_regex,
+        days_lookback=days_lookback,
+        max_pages_total=max_pages_total,
+        max_pages_per_category=max_pages_per_category,
+        enabled=enabled,
+    )
+    db.close()
+    return RedirectResponse("/settings/scrape-targets?saved=1", status_code=303)
+
+
+@app.post("/settings/scrape-targets/import")
+async def scrape_target_import(
+    request: Request,
+    _: Any = Depends(_basic_auth),
+) -> RedirectResponse:
+    form = await request.form()
+    raw = str(form.get("bulk_targets", "")).strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="批量导入内容不能为空")
+
+    rows = _parse_bulk_scrape_targets(raw)
+    if not rows:
+        raise HTTPException(status_code=400, detail="未解析到可导入站点")
+
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    for row in rows:
+        db.create_scrape_target(
+            name=str(row["name"]),
+            list_url=str(row["list_url"]),
+            base_url=str(row["base_url"]),
+            keyword_regex=str(row["keyword_regex"]),
+            days_lookback=row["days_lookback"],
+            max_pages_total=row["max_pages_total"],
+            max_pages_per_category=row["max_pages_per_category"],
+            enabled=True,
+        )
+    db.close()
+    return RedirectResponse(
+        f"/settings/scrape-targets?imported={len(rows)}", status_code=303
+    )
+
+
+@app.post("/settings/scrape-targets/import-builtin")
+def scrape_target_import_builtin(
+    _: Any = Depends(_basic_auth),
+) -> RedirectResponse:
+    rows = _load_builtin_verified_sites()
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    existing = {(str(t["name"]), str(t["list_url"])) for t in db.list_scrape_targets()}
+    imported = 0
+    for row in rows:
+        key = (str(row["name"]), str(row["list_url"]))
+        if key in existing:
+            continue
+        db.create_scrape_target(
+            name=str(row["name"]),
+            list_url=str(row["list_url"]),
+            base_url=str(row["base_url"]),
+            keyword_regex=str(row["keyword_regex"]),
+            days_lookback=row["days_lookback"],
+            max_pages_total=row["max_pages_total"],
+            max_pages_per_category=row["max_pages_per_category"],
+            enabled=True,
+        )
+        imported += 1
+    db.close()
+    return RedirectResponse(
+        f"/settings/scrape-targets?builtin_imported={imported}", status_code=303
+    )
+
+
+@app.get("/settings/scrape-targets/{target_id}/edit", response_class=HTMLResponse)
+def scrape_target_edit(
+    request: Request,
+    target_id: str,
+    saved: int = 0,
+    _: Any = Depends(_basic_auth),
+) -> HTMLResponse:
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    target = db.get_scrape_target(target_id)
+    db.close()
+    if not target:
+        raise HTTPException(status_code=404)
+    return _TEMPLATES.TemplateResponse(
+        request=request,
+        name="scrape_target_edit.html",
+        context={"request": request, "target": target, "saved": saved == 1},
+    )
+
+
+@app.post("/settings/scrape-targets/{target_id}/edit")
+async def scrape_target_edit_save(
+    request: Request,
+    target_id: str,
+    _: Any = Depends(_basic_auth),
+) -> RedirectResponse:
+    form = await request.form()
+    name = str(form.get("name", "")).strip()
+    list_url = str(form.get("list_url", "")).strip()
+    base_url = str(form.get("base_url", "")).strip()
+    keyword_regex = str(form.get("keyword_regex", "")).strip()
+    days_lookback = _parse_optional_int(str(form.get("days_lookback", "")))
+    max_pages_total = _parse_optional_int(str(form.get("max_pages_total", "")))
+    max_pages_per_category = _parse_optional_int(
+        str(form.get("max_pages_per_category", ""))
+    )
+    enabled = _truthy(str(form.get("enabled", "true")))
+
+    if not name:
+        raise HTTPException(status_code=400, detail="站点名称不能为空")
+    if not list_url:
+        raise HTTPException(status_code=400, detail="LIST_URL 不能为空")
+
+    base_url = base_url or _normalize_base_url(list_url, list_url)
+
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    if not db.get_scrape_target(target_id):
+        db.close()
+        raise HTTPException(status_code=404)
+    db.update_scrape_target(
+        target_id,
+        name=name,
+        list_url=list_url,
+        base_url=base_url,
+        keyword_regex=keyword_regex,
+        days_lookback=days_lookback,
+        max_pages_total=max_pages_total,
+        max_pages_per_category=max_pages_per_category,
+        enabled=enabled,
+    )
+    db.close()
+    return RedirectResponse(
+        f"/settings/scrape-targets/{target_id}/edit?saved=1", status_code=303
+    )
+
+
+@app.post("/settings/scrape-targets/{target_id}/toggle")
+def scrape_target_toggle(
+    target_id: str, _: Any = Depends(_basic_auth)
+) -> RedirectResponse:
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    target = db.get_scrape_target(target_id)
+    if not target:
+        db.close()
+        raise HTTPException(status_code=404)
+    db.set_scrape_target_enabled(target_id, not bool(target.get("enabled")))
+    db.close()
+    return RedirectResponse("/settings/scrape-targets", status_code=303)
+
+
+@app.post("/settings/scrape-targets/{target_id}/delete")
+def scrape_target_delete(
+    target_id: str, _: Any = Depends(_basic_auth)
+) -> RedirectResponse:
+    cfg = Config.from_env()
+    db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
+    db.delete_scrape_target(target_id)
+    db.close()
+    return RedirectResponse("/settings/scrape-targets", status_code=303)
+
+
+# ------------------------------------------------------------------ #
 # Feishu targets management                                            #
 # ------------------------------------------------------------------ #
 
@@ -882,8 +1435,9 @@ def feishu_targets_page(
     targets = db.list_feishu_targets()
     db.close()
     return _TEMPLATES.TemplateResponse(
-        "feishu_targets.html",
-        {"request": request, "targets": targets, "saved": saved == 1},
+        request=request,
+        name="feishu_targets.html",
+        context={"request": request, "targets": targets, "saved": saved == 1},
     )
 
 
@@ -896,7 +1450,12 @@ async def feishu_target_create(
     name = str(form.get("name", "")).strip()
     webhook_url = str(form.get("webhook_url", "")).strip()
     keyword_regex = str(form.get("keyword_regex", "")).strip()
-    enabled = str(form.get("enabled", "true")).strip().lower() in {"1", "true", "yes", "on"}
+    enabled = str(form.get("enabled", "true")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     if not name:
         raise HTTPException(status_code=400, detail="群名称不能为空")
@@ -929,8 +1488,9 @@ def feishu_target_edit(
     if not target:
         raise HTTPException(status_code=404)
     return _TEMPLATES.TemplateResponse(
-        "feishu_target_edit.html",
-        {"request": request, "target": target, "saved": saved == 1},
+        request=request,
+        name="feishu_target_edit.html",
+        context={"request": request, "target": target, "saved": saved == 1},
     )
 
 
@@ -944,7 +1504,12 @@ async def feishu_target_edit_save(
     name = str(form.get("name", "")).strip()
     webhook_url = str(form.get("webhook_url", "")).strip()
     keyword_regex = str(form.get("keyword_regex", "")).strip()
-    enabled = str(form.get("enabled", "true")).strip().lower() in {"1", "true", "yes", "on"}
+    enabled = str(form.get("enabled", "true")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
     if not name:
         raise HTTPException(status_code=400, detail="群名称不能为空")
@@ -964,7 +1529,9 @@ async def feishu_target_edit_save(
         enabled=enabled,
     )
     db.close()
-    return RedirectResponse(f"/settings/feishu/{target_id}/edit?saved=1", status_code=303)
+    return RedirectResponse(
+        f"/settings/feishu/{target_id}/edit?saved=1", status_code=303
+    )
 
 
 @app.post("/settings/feishu/{target_id}/toggle")

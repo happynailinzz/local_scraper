@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
+import re
 
 from .http_client import HttpClient
 
@@ -22,7 +23,7 @@ class FeishuClient:
 
     def send_card(self, card_payload: dict[str, Any]) -> None:
         headers = {"Content-Type": "application/json"}
-        self._http.post_json(
+        data = self._http.post_json(
             url=self._cfg.webhook_url,
             headers=headers,
             payload=card_payload,
@@ -30,11 +31,15 @@ class FeishuClient:
             retry_count=self._cfg.retry_count,
             retry_interval_ms=self._cfg.retry_interval_ms,
         )
+        if int(data.get("code", -1)) != 0:
+            msg = str(data.get("msg") or "unknown error")
+            raise RuntimeError(f"Feishu webhook failed: code={data.get('code')} msg={msg}")
 
 
 def build_new_item_card(
     title: str, date: str, ai_summary: str, url: str
 ) -> dict[str, Any]:
+    summary_content = _render_structured_summary(ai_summary)
     return {
         "msg_type": "interactive",
         "card": {
@@ -47,7 +52,7 @@ def build_new_item_card(
                     "tag": "div",
                     "text": {
                         "tag": "lark_md",
-                        "content": f"**发布日期**：{date}\n\n**AI 智能总结**：\n{ai_summary}",
+                        "content": f"**发布日期**：{date}\n\n{summary_content}",
                     },
                 },
                 {"tag": "hr"},
@@ -179,6 +184,7 @@ def build_digest_card(
 
     if shown:
         first = shown[0]
+        first_summary = _render_structured_summary(first["ai_summary"])
         elements.append(
             {
                 "tag": "div",
@@ -187,7 +193,7 @@ def build_digest_card(
                     "content": (
                         f"**1. {first['title']}**\n"
                         f"发布日期：{first['date']}\n\n"
-                        f"{first['ai_summary']}"
+                        f"{first_summary}"
                     ),
                 },
             }
@@ -210,6 +216,7 @@ def build_digest_card(
             elements.append({"tag": "hr"})
             for idx, it in enumerate(shown[1:], start=2):
                 summary = _digest_summary(it.get("ai_summary", ""))
+                structured = _render_structured_summary(it["ai_summary"])
                 elements.append(
                     {
                         "tag": "collapsible",
@@ -228,7 +235,7 @@ def build_digest_card(
                                     "content": (
                                         f"**{it['title']}**\n"
                                         f"发布日期：{it['date']}\n\n"
-                                        f"{it['ai_summary']}\n\n"
+                                        f"{structured}\n\n"
                                         f"[查看原文]({it['url']})"
                                     ),
                                 },
@@ -396,9 +403,156 @@ def build_feed_aggregate_card(
 
 
 def _digest_summary(text: str, max_len: int = 42) -> str:
-    t = (text or "").replace("\n", " ").strip()
+    fields = _parse_summary_fields(text)
+    if fields:
+        for key in [
+            "项目概要",
+            "项目编号",
+            "采购单位/招标人",
+            "代理机构",
+            "采购方式",
+            "标段/包号",
+            "交货期/服务期/工期",
+            "采购内容",
+            "预算/限价",
+            "报名截止",
+            "投标截止",
+            "开标时间",
+        ]:
+            if key in fields:
+                t = f"{key}：{fields[key]}"
+                break
+        else:
+            first_key = next(iter(fields))
+            t = f"{first_key}：{fields[first_key]}"
+    else:
+        t = (text or "").replace("\n", " ").strip()
     if not t:
         return "(无摘要)"
     if len(t) <= max_len:
         return t
     return t[:max_len].rstrip() + "…"
+
+
+def _parse_summary_fields(text: str) -> dict[str, str]:
+    fields: dict[str, str] = {}
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r"^([^：:]{2,20})[：:](.+)$", line)
+        if not m:
+            continue
+        key = m.group(1).strip()
+        value = _clean_summary_value(m.group(2).strip())
+        if key and value:
+            fields[key] = value
+    fields = _normalize_summary_fields(fields)
+    return fields
+
+
+def _clean_summary_value(value: str) -> str:
+    text = re.sub(r"\s+", " ", value or "").strip(" ,;；，。")
+    if not text:
+        return ""
+
+    split_markers = [
+        r"\s+[一二三四五六七八九十]+、",
+        r"\s+[0-9]+、",
+        r"\s+[一二三四五六七八九十]+\.",
+        r"\s+[0-9]+\.",
+        r"\s+(?:采购内容与最高限价|采购内容|技术要求|资格要求|响应文件|投标文件)",
+        r"\s+(?:采购人|招标人|项目名称)[:：]",
+    ]
+    for marker in split_markers:
+        text = re.split(marker, text, maxsplit=1)[0].strip(" ,;；，。")
+
+    text = re.sub(r"(?:采购信息公示|公告内容如下)$", "", text).strip(" ,;；，。")
+    return text
+
+
+def _normalize_summary_fields(fields: dict[str, str]) -> dict[str, str]:
+    normalized = dict(fields)
+
+    project_name = normalized.get("项目名称", "")
+    summary = normalized.get("项目概要", "")
+    better_summary = _refine_project_summary(project_name or summary)
+    if better_summary:
+        normalized["项目概要"] = better_summary
+
+    for key in ["采购单位/招标人", "采购方式", "项目名称"]:
+        value = normalized.get(key)
+        if not value:
+            continue
+        normalized[key] = _clean_summary_value(value)
+
+    return normalized
+
+
+def _refine_project_summary(text: str) -> str:
+    value = _clean_summary_value(text)
+    if not value:
+        return ""
+
+    value = re.sub(r"^\[.*?\]", "", value).strip()
+    value = re.sub(r"^[A-Za-z0-9\-_/]+", "", value).strip()
+    value = re.sub(r"^[\u4e00-\u9fffA-Za-z0-9]+公司", "", value).strip()
+    value = re.sub(r"^[0-9]{4}年[0-9]{1,2}月[0-9]{1,2}日", "", value).strip()
+    value = re.sub(r"(?:采购公告|招标公告|询比价公告|询比采购公告)$", "", value).strip()
+    value = re.sub(r"(?:-辅助厂|-.*厂)$", "", value).strip()
+    value = re.sub(r"^采购项目", "", value).strip()
+    value = value.strip(" -")
+
+    m = re.search(r"([\u4e00-\u9fffA-Za-z0-9]+(?:配件|设备|系统|平台|材料|服务|装置|工程|项目))", value)
+    if m:
+        core = m.group(1)
+        if not core.endswith("项目"):
+            core += "采购项目"
+        return core
+
+    return value
+
+
+def _render_structured_summary(text: str) -> str:
+    fields = _parse_summary_fields(text)
+    if not fields:
+        return f"**AI 智能总结**：\n{text}"
+
+    lines: list[str] = []
+    if "项目概要" in fields:
+        lines.append(f"**项目概要**：{fields['项目概要']}")
+
+    ordered_keys = [
+        "项目编号",
+        "采购单位/招标人",
+        "代理机构",
+        "采购方式",
+        "标段/包号",
+        "交货期/服务期/工期",
+        "采购内容",
+        "预算/限价",
+        "预算金额",
+        "报名开始",
+        "报名截止",
+        "获取文件",
+        "投标截止",
+        "开标时间",
+        "实施地点",
+        "联系人",
+        "电话",
+        "项目名称",
+    ]
+    highlight_keys = {"报名截止", "投标截止", "开标时间", "预算/限价", "预算金额"}
+
+    for key in ordered_keys:
+        if key not in fields:
+            continue
+        label = f"**{key}**" if key in highlight_keys else key
+        lines.append(f"- {label}：{fields[key]}")
+
+    for key, value in fields.items():
+        if key in {"项目概要", *ordered_keys}:
+            continue
+        lines.append(f"- {key}：{value}")
+
+    return "\n".join(lines)

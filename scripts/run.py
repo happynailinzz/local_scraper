@@ -37,6 +37,10 @@ def main() -> int:
         type=int,
         help="Max pages to fetch per category (default: 50)",
     )
+    parser.add_argument(
+        "--site-list-markdown",
+        help="Path to a markdown file containing site links to crawl",
+    )
     parser.add_argument("--loop-delay", type=float, help="Delay seconds between items")
     parser.add_argument("--days-lookback", type=int, help="Look back N days")
     parser.add_argument(
@@ -74,6 +78,8 @@ def main() -> int:
         os.environ["MAX_PAGES_TOTAL"] = str(args.max_pages_total)
     if args.max_pages_per_category is not None:
         os.environ["MAX_PAGES_PER_CATEGORY"] = str(args.max_pages_per_category)
+    if args.site_list_markdown:
+        os.environ["SITE_LIST_MARKDOWN_PATH"] = args.site_list_markdown
     if args.loop_delay is not None:
         os.environ["LOOP_DELAY"] = str(args.loop_delay)
     if args.days_lookback is not None:

@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% block body %}
+
+<div class="card">
+  <div class="h">抓取站点管理</div>
+  <div class="muted">统一维护抓取入口、基础域名和站点级覆盖参数。任务中可多选站点逐个抓取。</div>
+  {% if saved %}
+  <div class="pill" style="margin-top:10px;">保存成功</div>
+  {% endif %}
+  {% if imported %}
+  <div class="pill" style="margin-top:10px;">已导入 {{ imported }} 个站点</div>
+  {% endif %}
+  {% if builtin_imported >= 0 %}
+  <div class="muted" style="margin-top:10px;">内置已验证网站清单来源：<code>docs/已验证网站清单.md</code></div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="h" style="font-size:16px;">内置已验证站点</div>
+  <div class="muted">一键导入项目内置的已验证网站清单，重复站点会自动跳过。</div>
+  {% if builtin_imported %}
+  <div class="pill" style="margin-top:10px;">本次导入 {{ builtin_imported }} 个内置站点</div>
+  {% endif %}
+  <form method="post" action="/settings/scrape-targets/import-builtin" style="margin-top:10px;">
+    <button type="submit">导入内置已验证网站清单</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="h" style="font-size:16px;">新增抓取站点</div>
+  <form method="post" action="/settings/scrape-targets" class="controls">
+    <div style="min-width:220px;flex:1;">
+      <label>站点名称</label>
+      <input style="width:100%;" name="name" placeholder="中国政府采购网" />
+    </div>
+    <div style="min-width:360px;flex:2;">
+      <label>LIST_URL</label>
+      <input style="width:100%;" name="list_url" placeholder="https://example.com/list" />
+    </div>
+    <div style="min-width:320px;flex:1;">
+      <label>BASE_URL</label>
+      <input style="width:100%;" name="base_url" placeholder="https://example.com" />
+    </div>
+    <div style="min-width:260px;flex:1;">
+      <label>站点关键词覆盖</label>
+      <input style="width:100%;" name="keyword_regex" placeholder="可选，留空则用任务关键词" />
+    </div>
+    <div>
+      <label>回溯天数</label>
+      <input name="days_lookback" placeholder="可选" />
+    </div>
+    <div>
+      <label>MAX_PAGES_TOTAL</label>
+      <input name="max_pages_total" placeholder="可选" />
+    </div>
+    <div>
+      <label>MAX_PAGES_PER_CATEGORY</label>
+      <input name="max_pages_per_category" placeholder="可选" />
+    </div>
+    <div>
+      <label>启用</label>
+      <select name="enabled">
+        <option value="true" selected>是</option>
+        <option value="false">否</option>
+      </select>
+    </div>
+    <div>
+      <button type="submit">新增站点</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="h" style="font-size:16px;">批量导入</div>
+  <div class="muted">每行一个站点，字段顺序：名称 | LIST_URL | BASE_URL | 关键词正则 | 回溯天数 | MAX_PAGES_TOTAL | MAX_PAGES_PER_CATEGORY。支持使用制表符或 | 分隔，后 4 列可选。</div>
+  <form method="post" action="/settings/scrape-targets/import" style="margin-top:10px;">
+    <label>批量内容</label>
+    <textarea name="bulk_targets" style="width:100%;min-height:180px;background:rgba(9,14,26,0.7);border:1px solid var(--line);color:var(--text);border-radius:12px;padding:12px;">中国政府采购网 | http://www.ccgp.gov.cn/ | http://www.ccgp.gov.cn/ | (采购|招标) | 7 | 80 | 30</textarea>
+    <div style="margin-top:10px;">
+      <button type="submit">批量导入</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>名称</th>
+        <th>入口</th>
+        <th>覆盖配置</th>
+        <th>状态</th>
+        <th>操作</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in targets %}
+      <tr>
+        <td class="rowtitle">{{ t.name }}</td>
+        <td class="muted">
+          <div>{{ t.list_url }}</div>
+          <div style="margin-top:4px;">BASE: {{ t.base_url }}</div>
+        </td>
+        <td class="muted">
+          <div>关键词: {{ t.keyword_regex or '-' }}</div>
+          <div>回溯: {{ t.days_lookback or '-' }}</div>
+          <div>总页数: {{ t.max_pages_total or '-' }}</div>
+          <div>单栏目页数: {{ t.max_pages_per_category or '-' }}</div>
+        </td>
+        <td><span class="pill">{{ 'ON' if t.enabled else 'OFF' }}</span></td>
+        <td>
+          <a href="/settings/scrape-targets/{{ t.target_id }}/edit"><button type="button">编辑</button></a>
+          <form method="post" action="/settings/scrape-targets/{{ t.target_id }}/toggle" style="display:inline;">
+            <button type="submit">{{ '停用' if t.enabled else '启用' }}</button>
+          </form>
+          <form method="post" action="/settings/scrape-targets/{{ t.target_id }}/delete" style="display:inline;">
+            <button type="submit">删除</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% endblock %}

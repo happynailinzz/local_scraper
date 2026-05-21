@@ -2,7 +2,7 @@
 {% block body %}
 
 <div class="card">
-  <div class="h">任务详情</div>
+  <div class="h">{{ task.name or '任务详情' }}</div>
   <div class="muted">task_id: {{ task.task_id }}</div>
   <div style="margin-top:8px;">
     <div><span class="pill">{{ 'ON' if task.enabled else 'OFF' }}</span> <span class="pill">{{ task.schedule_type }}</span></div>
@@ -19,6 +19,23 @@
     <div class="muted" style="margin-top:6px;">
       KEYWORDS_LABEL: {{ task.config.get('KEYWORDS_LABEL', '-') if task.config else '-' }}
     </div>
+    {% if all_scrape_targets %}
+    <div style="margin-top:10px;">
+      <div class="muted" style="margin-bottom:6px;">抓取站点</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        {% for t in all_scrape_targets %}
+        <span class="pill" style="{% if t.target_id in selected_scrape_ids %}border-color:var(--accent);color:var(--accent);{% else %}opacity:0.4;{% endif %}">
+          {{ t.name }}
+          {% if t.keyword_regex %} ({{ t.keyword_regex }}){% endif %}
+          {% if not t.enabled %} [停用]{% endif %}
+        </span>
+        {% endfor %}
+      </div>
+      {% if not selected_scrape_ids %}
+      <div class="muted" style="margin-top:4px;font-size:12px;">未选择抓取站点，将使用全局 LIST_URL</div>
+      {% endif %}
+    </div>
+    {% endif %}
     {% if all_targets %}
     <div style="margin-top:10px;">
       <div class="muted" style="margin-bottom:6px;">推送目标飞书群</div>
@@ -38,6 +55,10 @@
   </div>
 
   <div style="margin-top:10px;">
+    <a href="/tasks/{{ task.task_id }}/edit"><button type="button">编辑</button></a>
+    <form method="post" action="/tasks/{{ task.task_id }}/copy" style="display:inline;">
+      <button type="submit">复制任务</button>
+    </form>
     <form method="post" action="/tasks/{{ task.task_id }}/toggle" style="display:inline;">
       <button type="submit">{{ '停用' if task.enabled else '启用' }}</button>
     </form>

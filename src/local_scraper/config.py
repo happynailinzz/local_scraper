@@ -28,6 +28,7 @@ def _parse_int(value: str | None, default: int) -> int:
 class Config:
     list_url: str
     base_url: str
+    site_list_markdown_path: str | None
     user_agent: str
 
     db_path: str
@@ -114,6 +115,10 @@ class Config:
                 "LIST_URL", "https://zcpt.zgpmsm.com.cn/jyxx/sec_listjyxx.html"
             ),
             base_url=os.environ.get("BASE_URL", "https://zcpt.zgpmsm.com.cn"),
+            site_list_markdown_path=(
+                os.environ.get("SITE_LIST_MARKDOWN_PATH") or ""
+            ).strip()
+            or None,
             user_agent=os.environ.get(
                 "USER_AGENT",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36",

@@ -17,6 +17,7 @@
       <tr>
         <th>name</th>
         <th>schedule</th>
+        <th>bindings</th>
         <th>enabled</th>
         <th>running</th>
         <th>last</th>
@@ -35,11 +36,28 @@
             interval: {{ t.interval_seconds }}s
           {% endif %}
         </td>
+        <td class="muted">
+          <div>站点: {{ t.scrape_target_count }}</div>
+          {% if t.scrape_target_names %}
+          <div style="font-size:12px;">{{ t.scrape_target_names[:3] | join('、') }}{% if t.scrape_target_count > 3 %} 等 {{ t.scrape_target_count }} 个{% endif %}</div>
+          {% else %}
+          <div style="font-size:12px;">使用全局 LIST_URL</div>
+          {% endif %}
+          <div>飞书: {{ t.feishu_target_count }}</div>
+          {% if t.feishu_target_names %}
+          <div style="font-size:12px;">{{ t.feishu_target_names[:3] | join('、') }}{% if t.feishu_target_count > 3 %} 等 {{ t.feishu_target_count }} 个{% endif %}</div>
+          {% else %}
+          <div style="font-size:12px;">使用全局 Webhook</div>
+          {% endif %}
+        </td>
         <td><span class="pill">{{ 'ON' if t.enabled else 'OFF' }}</span></td>
         <td><span class="pill">{{ 'RUNNING' if t.runtime and t.runtime.running else 'IDLE' }}</span></td>
         <td class="muted">{{ t.runtime.last_status if t.runtime else '-' }}</td>
         <td class="muted">{{ t.next_run_time if t.next_run_time else '-' }}</td>
         <td>
+          <form method="post" action="/tasks/{{ t.task_id }}/copy" style="display:inline;">
+            <button type="submit">复制</button>
+          </form>
           <form method="post" action="/tasks/{{ t.task_id }}/toggle" style="display:inline;">
             <button type="submit">{{ '停用' if t.enabled else '启用' }}</button>
           </form>

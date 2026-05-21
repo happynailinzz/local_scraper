@@ -147,6 +147,7 @@ class TaskScheduler:
         cfg = Config.from_env()
         db = Database(cfg.db_path, dedupe_strategy=cfg.dedupe_strategy)
         t = db.get_task(task_id)
+        scrape_targets = db.get_task_scrape_targets(task_id)
         targets = db.get_task_targets(task_id)
         db.close()
         if not t:
@@ -158,9 +159,28 @@ class TaskScheduler:
         conf: dict[str, object] = conf_raw if isinstance(conf_raw, dict) else {}
         for k, v in conf.items():
             base_overrides[str(k)] = str(v)
+        base_overrides["TASK_ID"] = task_id
+        base_overrides["TASK_NAME"] = str(t.get("name") or "")
+        base_overrides["RUN_SCRAPE_TARGET_NAMES"] = "||".join(
+            str(target.get("name") or "") for target in scrape_targets
+        )
+        base_overrides["RUN_FEISHU_TARGET_NAMES"] = "||".join(
+            str(target.get("name") or "") for target in targets
+        )
 
         cwd = str(Path(__file__).resolve().parents[3])
         cmd = [sys.executable, "scripts/run.py", "--log-json"]
+
+        if scrape_targets:
+            self._run_multi_scrape_targets(
+                task_id,
+                scrape_targets,
+                targets,
+                base_overrides,
+                cmd,
+                cwd,
+            )
+            return
 
         if targets:
             # Multi-target dispatch: fork one subprocess per enabled target.
@@ -325,6 +345,146 @@ class TaskScheduler:
             rt.last_exit_code = exit_codes[-1] if exit_codes else 0
             rt.last_status = overall
             rt.lines.append(f"[scheduler] all targets done: {overall}")
+
+    def _run_multi_scrape_targets(
+        self,
+        task_id: str,
+        scrape_targets: list[dict[str, object]],
+        feishu_targets: list[dict[str, object]],
+        base_overrides: dict[str, str],
+        cmd: list[str],
+        cwd: str,
+    ) -> None:
+        with self._lock:
+            rt = self._runtime.get(task_id)
+            if not rt:
+                rt = TaskRuntime(
+                    task_id=task_id,
+                    running=False,
+                    last_status="NEVER",
+                    last_started_at=None,
+                    last_finished_at=None,
+                    last_exit_code=None,
+                    lines=[],
+                    proc=None,
+                )
+                self._runtime[task_id] = rt
+            if rt.running:
+                rt.lines.append("[scheduler] task already running, skip")
+                return
+            rt.running = True
+            rt.last_status = "RUNNING"
+            rt.last_started_at = time.time()
+            rt.last_finished_at = None
+            rt.last_exit_code = None
+            rt.lines.append(
+                f"[scheduler] multi-scrape dispatch: {len(scrape_targets)} site(s)"
+            )
+
+        exit_codes: list[int] = []
+
+        for scrape_target in scrape_targets:
+            site_name = str(scrape_target.get("name", ""))
+            overrides = dict(base_overrides)
+            overrides["LIST_URL"] = str(scrape_target.get("list_url", ""))
+            overrides["BASE_URL"] = str(scrape_target.get("base_url", ""))
+
+            keyword_regex = str(scrape_target.get("keyword_regex") or "").strip()
+            if keyword_regex:
+                overrides["KEYWORD_REGEX"] = keyword_regex
+                overrides["KEYWORDS_LABEL"] = site_name
+            if scrape_target.get("days_lookback") is not None:
+                overrides["DAYS_LOOKBACK"] = str(scrape_target["days_lookback"])
+            if scrape_target.get("max_pages_total") is not None:
+                overrides["MAX_PAGES_TOTAL"] = str(scrape_target["max_pages_total"])
+            if scrape_target.get("max_pages_per_category") is not None:
+                overrides["MAX_PAGES_PER_CATEGORY"] = str(
+                    scrape_target["max_pages_per_category"]
+                )
+
+            if feishu_targets:
+                code = self._run_site_with_feishu_targets(
+                    task_id,
+                    site_name,
+                    overrides,
+                    feishu_targets,
+                    cmd,
+                    cwd,
+                )
+            else:
+                code = self._run_site_once(task_id, site_name, overrides, cmd, cwd)
+            exit_codes.append(code)
+
+        overall = "COMPLETED" if all(c == 0 for c in exit_codes) else "FAILED"
+        with self._lock:
+            rt.running = False
+            rt.proc = None
+            rt.last_finished_at = time.time()
+            rt.last_exit_code = exit_codes[-1] if exit_codes else 0
+            rt.last_status = overall
+            rt.lines.append(f"[scheduler] all scrape targets done: {overall}")
+
+    def _run_site_with_feishu_targets(
+        self,
+        task_id: str,
+        site_name: str,
+        overrides: dict[str, str],
+        feishu_targets: list[dict[str, object]],
+        cmd: list[str],
+        cwd: str,
+    ) -> int:
+        exit_codes: list[int] = []
+        self._append_line(task_id, f"[scheduler] => site: {site_name}")
+        for target in feishu_targets:
+            target_name = str(target.get("name", ""))
+            env_overrides = dict(overrides)
+            env_overrides["FEISHU_WEBHOOK_URL"] = str(target.get("webhook_url", ""))
+            env_overrides["NOTIFY_TARGET_KEY"] = str(target.get("target_id", ""))
+            kw_regex = str(target.get("keyword_regex") or "")
+            if kw_regex:
+                env_overrides["KEYWORD_REGEX"] = kw_regex
+            code = self._run_site_once(
+                task_id,
+                f"{site_name} -> {target_name}",
+                env_overrides,
+                cmd,
+                cwd,
+            )
+            exit_codes.append(code)
+        return 0 if all(c == 0 for c in exit_codes) else 1
+
+    def _run_site_once(
+        self,
+        task_id: str,
+        label: str,
+        overrides: dict[str, str],
+        cmd: list[str],
+        cwd: str,
+    ) -> int:
+        env = self._build_env(overrides)
+        self._append_line(task_id, f"[scheduler] → target: {label}")
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+            with self._lock:
+                rt = self._runtime.get(task_id)
+                if rt:
+                    rt.proc = proc
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                self._append_line(task_id, f"[{label}] {line.rstrip(chr(10))}")
+            code = proc.wait()
+            self._append_line(task_id, f"[scheduler] target {label} done (code={code})")
+            return code
+        except Exception as e:
+            self._append_line(task_id, f"[scheduler] target {label} failed: {e}")
+            return 1
 
     def _append_line(self, task_id: str, line: str) -> None:
         with self._lock:
